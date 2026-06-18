@@ -23,12 +23,12 @@ export function detectFramework(dir) {
       "@vitejs/plugin-react" in deps ||
       "@vitejs/plugin-vue" in deps
     ) {
-      return { framework: "vite", captainDef: viteDef() };
+      return { framework: "vite", captainDef: viteDef(dir) };
     }
     if ("next" in deps) {
-      return { framework: "nextjs", captainDef: nextjsDef() };
+      return { framework: "nextjs", captainDef: nextjsDef(dir) };
     }
-    return { framework: "node", captainDef: nodeDef() };
+    return { framework: "node", captainDef: nodeDef(dir) };
   }
 
   if (existsSync(join(dir, "requirements.txt"))) {
@@ -42,7 +42,58 @@ export function detectFramework(dir) {
   return { framework: "unknown", captainDef: null };
 }
 
-function viteDef() {
+/**
+ * Pick install tooling from the lockfile committed in `dir`. CapRover builds the
+ * repo as-is, so the generated Dockerfile must use whatever package manager the
+ * member uses — and must not assume a lockfile exists (`npm ci` aborts without
+ * one, which previously broke every lockfile-less Node repo).
+ *
+ * @param {string} dir
+ * @param {{ dev: boolean }} opts  dev=true keeps devDependencies (needed to build)
+ * @returns {{ setup: string[], copy: string, install: string, run: string }}
+ */
+function nodePackaging(dir, { dev }) {
+  const has = (f) => existsSync(join(dir, f));
+
+  if (has("yarn.lock")) {
+    return {
+      setup: ["RUN corepack enable"],
+      copy: "COPY package.json yarn.lock ./",
+      install: dev
+        ? "RUN yarn install --frozen-lockfile"
+        : "RUN yarn install --production --frozen-lockfile",
+      run: "yarn",
+    };
+  }
+  if (has("pnpm-lock.yaml")) {
+    return {
+      setup: ["RUN corepack enable"],
+      copy: "COPY package.json pnpm-lock.yaml ./",
+      install: dev
+        ? "RUN pnpm install --frozen-lockfile"
+        : "RUN pnpm install --prod --frozen-lockfile",
+      run: "pnpm",
+    };
+  }
+  if (has("package-lock.json")) {
+    return {
+      setup: [],
+      copy: "COPY package.json package-lock.json ./",
+      install: dev ? "RUN npm ci" : "RUN npm ci --omit=dev",
+      run: "npm run",
+    };
+  }
+  // No lockfile — `npm ci` would abort, so fall back to `npm install`.
+  return {
+    setup: [],
+    copy: "COPY package.json ./",
+    install: dev ? "RUN npm install" : "RUN npm install --omit=dev",
+    run: "npm run",
+  };
+}
+
+function viteDef(dir) {
+  const p = nodePackaging(dir, { dev: true });
   return {
     schemaVersion: 2,
     dockerfileLines: [
@@ -50,10 +101,11 @@ function viteDef() {
       // object that breaks Vite's config loader. Use Debian slim instead.
       "FROM node:lts-slim AS builder",
       "WORKDIR /app",
-      "COPY package*.json ./",
-      "RUN npm install",          // npm ci requires package-lock.json; install works with any lock file or none
+      ...p.setup,
+      p.copy,
+      p.install,
       "COPY . .",
-      "RUN npm run build",
+      `RUN ${p.run} build`,
       "FROM nginx:alpine",
       "COPY --from=builder /app/dist /usr/share/nginx/html",
       // Single-quoted string keeps $uri literal (no shell expansion). Overwrites nginx default
@@ -64,30 +116,34 @@ function viteDef() {
   };
 }
 
-function nextjsDef() {
+function nextjsDef(dir) {
+  const p = nodePackaging(dir, { dev: true });
   return {
     schemaVersion: 2,
     dockerfileLines: [
       "FROM node:lts-slim",
       "WORKDIR /app",
-      "COPY package*.json ./",
-      "RUN npm install",
+      ...p.setup,
+      p.copy,
+      p.install,
       "COPY . .",
-      "RUN npm run build",
+      `RUN ${p.run} build`,
       "EXPOSE 3000",
-      'CMD ["npm", "start"]',
+      `CMD ${p.run} start`,
     ],
   };
 }
 
-function nodeDef() {
+function nodeDef(dir) {
+  const p = nodePackaging(dir, { dev: false });
   return {
     schemaVersion: 2,
     dockerfileLines: [
       "FROM node:lts-slim",
       "WORKDIR /app",
-      "COPY package*.json ./",
-      "RUN npm ci --omit=dev",
+      ...p.setup,
+      p.copy,
+      p.install,
       "COPY . .",
       "EXPOSE 3000",
       'CMD ["node", "index.js"]',

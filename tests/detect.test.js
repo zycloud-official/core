@@ -93,3 +93,52 @@ describe("detectFramework", () => {
     expect(framework).toBe("dockerfile");
   });
 });
+
+// The generated Dockerfile must match the package manager the member committed,
+// and must never run `npm ci` without a lockfile (it aborts). These assert the
+// install/copy commands without needing a real Docker build.
+describe("Node package-manager detection", () => {
+  const lines = async (files) => {
+    await writeFile(
+      join(dir, "package.json"),
+      JSON.stringify({ dependencies: { express: "^4.19.0" } })
+    );
+    for (const [name, body] of Object.entries(files)) {
+      await writeFile(join(dir, name), body);
+    }
+    return detectFramework(dir).captainDef.dockerfileLines;
+  };
+
+  it("falls back to npm install (not npm ci) when no lockfile is present", async () => {
+    const dl = await lines({});
+    expect(dl).toContain("RUN npm install --omit=dev");
+    expect(dl.some((l) => l.includes("npm ci"))).toBe(false);
+    expect(dl).toContain("COPY package.json ./");
+  });
+
+  it("uses npm ci when package-lock.json is present", async () => {
+    const dl = await lines({ "package-lock.json": "{}" });
+    expect(dl).toContain("RUN npm ci --omit=dev");
+    expect(dl).toContain("COPY package.json package-lock.json ./");
+  });
+
+  it("uses yarn (via corepack) when yarn.lock is present", async () => {
+    const dl = await lines({ "yarn.lock": "" });
+    expect(dl).toContain("RUN corepack enable");
+    expect(dl).toContain("RUN yarn install --production --frozen-lockfile");
+    expect(dl).toContain("COPY package.json yarn.lock ./");
+  });
+
+  it("uses pnpm (via corepack) when pnpm-lock.yaml is present", async () => {
+    const dl = await lines({ "pnpm-lock.yaml": "" });
+    expect(dl).toContain("RUN corepack enable");
+    expect(dl).toContain("RUN pnpm install --prod --frozen-lockfile");
+    expect(dl).toContain("COPY package.json pnpm-lock.yaml ./");
+  });
+
+  it("prefers yarn over npm when both lockfiles exist", async () => {
+    const dl = await lines({ "yarn.lock": "", "package-lock.json": "{}" });
+    expect(dl).toContain("RUN yarn install --production --frozen-lockfile");
+    expect(dl.some((l) => l.includes("npm ci"))).toBe(false);
+  });
+});

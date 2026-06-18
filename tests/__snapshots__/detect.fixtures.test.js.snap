@@ -1,0 +1,78 @@
+// Vitest Snapshot v1, https://vitest.dev/guide/snapshot.html
+
+exports[`detectFramework against real fixtures > detects dockerfile for fixtures/dockerfile 1`] = `null`;
+
+exports[`detectFramework against real fixtures > detects nextjs for fixtures/nextjs 1`] = `
+{
+  "dockerfileLines": [
+    "FROM node:lts-slim",
+    "WORKDIR /app",
+    "COPY package.json ./",
+    "RUN npm install",
+    "COPY . .",
+    "RUN npm run build",
+    "EXPOSE 3000",
+    "CMD npm run start",
+  ],
+  "schemaVersion": 2,
+}
+`;
+
+exports[`detectFramework against real fixtures > detects node for fixtures/node 1`] = `
+{
+  "dockerfileLines": [
+    "FROM node:lts-slim",
+    "WORKDIR /app",
+    "COPY package.json ./",
+    "RUN npm install --omit=dev",
+    "COPY . .",
+    "EXPOSE 3000",
+    "CMD ["node", "index.js"]",
+  ],
+  "schemaVersion": 2,
+}
+`;
+
+exports[`detectFramework against real fixtures > detects python for fixtures/python 1`] = `
+{
+  "dockerfileLines": [
+    "FROM python:3.12-slim",
+    "WORKDIR /app",
+    "COPY requirements.txt ./",
+    "RUN pip install --no-cache-dir -r requirements.txt",
+    "COPY . .",
+    "EXPOSE 5000",
+    "CMD ["python", "app.py"]",
+  ],
+  "schemaVersion": 2,
+}
+`;
+
+exports[`detectFramework against real fixtures > detects static for fixtures/static 1`] = `
+{
+  "dockerfileLines": [
+    "FROM nginx:alpine",
+    "COPY . /usr/share/nginx/html",
+    "EXPOSE 80",
+  ],
+  "schemaVersion": 2,
+}
+`;
+
+exports[`detectFramework against real fixtures > detects vite for fixtures/vite 1`] = `
+{
+  "dockerfileLines": [
+    "FROM node:lts-slim AS builder",
+    "WORKDIR /app",
+    "COPY package.json ./",
+    "RUN npm install",
+    "COPY . .",
+    "RUN npm run build",
+    "FROM nginx:alpine",
+    "COPY --from=builder /app/dist /usr/share/nginx/html",
+    "RUN echo 'server{listen 80;root /usr/share/nginx/html;index index.html;location /{try_files $uri $uri/ /index.html;}}' > /etc/nginx/conf.d/default.conf",
+    "EXPOSE 80",
+  ],
+  "schemaVersion": 2,
+}
+`;

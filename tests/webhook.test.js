@@ -8,9 +8,9 @@ vi.mock("../src/deploy.js", () => ({
   deployApp: vi.fn().mockResolvedValue(undefined),
 }));
 
-// Prevent src/routes/auth.js from crashing on import —
-// it reads GITHUB_APP_PRIVATE_KEY at module init time via src/github.js
-vi.mock("../src/github.js", () => ({
+// Prevent src/integrations/github/oauth.js from crashing on import —
+// it reads GITHUB_APP_PRIVATE_KEY at module init time via src/integrations/github/client.js
+vi.mock("../src/integrations/github/client.js", () => ({
   githubApp: { oauth: {} },
   downloadTarball: vi.fn(),
 }));

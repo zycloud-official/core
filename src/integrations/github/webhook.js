@@ -1,9 +1,9 @@
 import { Router } from "express";
 import { createHmac, timingSafeEqual } from "node:crypto";
-import { prisma } from "../db.js";
-import { deployApp } from "../deploy.js";
+import { prisma } from "../../db.js";
+import { deployApp } from "../../deploy.js";
 
-export const webhookRoutes = Router();
+export const githubWebhookRoutes = Router();
 
 function verifySignature(rawBody, signature, secret) {
   const expected =
@@ -14,7 +14,7 @@ function verifySignature(rawBody, signature, secret) {
   return timingSafeEqual(sigBuf, expBuf);
 }
 
-webhookRoutes.post("/webhook", async (req, res) => {
+githubWebhookRoutes.post("/webhook", async (req, res) => {
   const sig = req.headers["x-hub-signature-256"];
   if (
     !sig ||

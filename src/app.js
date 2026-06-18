@@ -1,7 +1,7 @@
 import express from "express";
 import cookieParser from "cookie-parser";
-import { authRoutes } from "./routes/auth.js";
-import { webhookRoutes } from "./routes/webhook.js";
+import { githubOAuthRoutes } from "./integrations/github/oauth.js";
+import { githubWebhookRoutes } from "./integrations/github/webhook.js";
 import { dashboardRoutes } from "./routes/dashboard.js";
 
 const app = express();
@@ -17,8 +17,8 @@ app.use(
 
 app.use(cookieParser());
 
-app.use(authRoutes);
-app.use(webhookRoutes);
+app.use(githubOAuthRoutes);
+app.use(githubWebhookRoutes);
 app.use(dashboardRoutes);
 
 app.get("/health", (_req, res) =>

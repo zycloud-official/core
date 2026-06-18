@@ -6,7 +6,7 @@ import * as tar from "tar";
 import { prisma } from "../src/db.js";
 import { cleanDb } from "./helpers.js";
 
-vi.mock("../src/github.js", () => ({
+vi.mock("../src/integrations/github/client.js", () => ({
   downloadTarball: vi.fn(),
   githubApp: {},
 }));
@@ -19,7 +19,7 @@ vi.mock("../src/caprover.js", () => ({
 }));
 
 const { deployApp } = await import("../src/deploy.js");
-const { downloadTarball } = await import("../src/github.js");
+const { downloadTarball } = await import("../src/integrations/github/client.js");
 const { getAppDefinition, createApp, uploadTarball, enableSsl } = await import("../src/caprover.js");
 
 // Creates a minimal .tar.gz mimicking GitHub's tarball format

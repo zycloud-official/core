@@ -1,12 +1,12 @@
 import { Router } from "express";
 import { randomBytes } from "node:crypto";
-import { githubApp } from "../github.js";
-import { prisma } from "../db.js";
+import { githubApp } from "./client.js";
+import { prisma } from "../../db.js";
 
-export const authRoutes = Router();
+export const githubOAuthRoutes = Router();
 
 // Step 1: redirect to GitHub OAuth
-authRoutes.get("/auth/github", (_req, res) => {
+githubOAuthRoutes.get("/auth/github", (_req, res) => {
   const { url } = githubApp.oauth.getWebFlowAuthorizationUrl({
     scopes: [],
     redirectUrl: `${process.env.BASE_URL}/auth/callback`,
@@ -15,7 +15,7 @@ authRoutes.get("/auth/github", (_req, res) => {
 });
 
 // Step 2: GitHub redirects back with ?code=
-authRoutes.get("/auth/callback", async (req, res) => {
+githubOAuthRoutes.get("/auth/callback", async (req, res) => {
   const { code } = req.query;
   if (!code) return res.status(400).json({ error: "Missing OAuth code" });
 
@@ -64,7 +64,7 @@ authRoutes.get("/auth/callback", async (req, res) => {
   res.redirect(`${process.env.BASE_URL}/dashboard`);
 });
 
-authRoutes.post("/auth/logout", async (req, res) => {
+githubOAuthRoutes.post("/auth/logout", async (req, res) => {
   const token = req.cookies?.session;
   if (token) {
     await prisma.member.updateMany({

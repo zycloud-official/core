@@ -10,7 +10,7 @@ import { constants } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import * as tar from "tar";
-import { downloadTarball } from "./github.js";
+import { downloadTarball } from "./integrations/github/client.js";
 import { detectFramework } from "./detect.js";
 import { getAppDefinition, createApp, uploadTarball, enableSsl } from "./caprover.js";
 import { prisma } from "./db.js";

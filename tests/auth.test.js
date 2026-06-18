@@ -3,7 +3,7 @@ import request from "supertest";
 import { prisma } from "../src/db.js";
 import { cleanDb } from "./helpers.js";
 
-vi.mock("../src/github.js", () => ({
+vi.mock("../src/integrations/github/client.js", () => ({
   githubApp: {
     oauth: {
       getWebFlowAuthorizationUrl: vi.fn().mockReturnValue({

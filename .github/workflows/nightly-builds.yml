@@ -1,0 +1,45 @@
+name: Nightly build verification
+
+# Runs the opt-in Docker build tier (tests/build.test.js) that the default
+# `yarn test` skips: for every framework fixture it generates the
+# captain-definition, `docker build`s it, runs the container, and HTTP-probes
+# the exposed port. Catches template regressions and base-image drift
+# (node:lts-slim, nginx:alpine, python:3.12-slim) before a member deploy hits it.
+
+on:
+  schedule:
+    - cron: "0 3 * * *" # 03:00 UTC nightly
+  workflow_dispatch: {} # allow manual runs from the Actions tab
+
+# A new run supersedes an in-flight one (e.g. manual trigger during a nightly).
+concurrency:
+  group: nightly-builds
+  cancel-in-progress: true
+
+jobs:
+  build-tier:
+    name: Build & serve all framework fixtures
+    runs-on: ubuntu-latest
+    # Base-image pulls + the Next.js install/build dominate wall-clock.
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: yarn
+
+      - name: Install dependencies
+        run: yarn install --frozen-lockfile
+
+      # Docker is preinstalled on ubuntu-latest; surface its version in the log.
+      - name: Docker info
+        run: docker version
+
+      # Runs the full suite with the Docker tier enabled, so the fast tests and
+      # the build tier are both validated nightly.
+      - name: Run tests with Docker build tier
+        run: yarn test
+        env:
+          RUN_DOCKER_BUILDS: "1"

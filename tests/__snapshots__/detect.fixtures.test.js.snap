@@ -48,6 +48,36 @@ exports[`detectFramework against real fixtures > detects python for fixtures/pyt
 }
 `;
 
+exports[`detectFramework against real fixtures > detects python for fixtures/python-django 1`] = `
+{
+  "dockerfileLines": [
+    "FROM python:3.12-slim",
+    "WORKDIR /app",
+    "COPY requirements.txt ./",
+    "RUN pip install --no-cache-dir -r requirements.txt",
+    "COPY . .",
+    "EXPOSE 8000",
+    "CMD ["gunicorn", "mysite.wsgi:application", "--bind", "0.0.0.0:8000"]",
+  ],
+  "schemaVersion": 2,
+}
+`;
+
+exports[`detectFramework against real fixtures > detects python for fixtures/python-fastapi 1`] = `
+{
+  "dockerfileLines": [
+    "FROM python:3.12-slim",
+    "WORKDIR /app",
+    "COPY requirements.txt ./",
+    "RUN pip install --no-cache-dir -r requirements.txt",
+    "COPY . .",
+    "EXPOSE 8000",
+    "CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8000"]",
+  ],
+  "schemaVersion": 2,
+}
+`;
+
 exports[`detectFramework against real fixtures > detects static for fixtures/static 1`] = `
 {
   "dockerfileLines": [

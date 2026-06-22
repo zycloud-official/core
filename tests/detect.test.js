@@ -142,3 +142,65 @@ describe("Node package-manager detection", () => {
     expect(dl.some((l) => l.includes("npm ci"))).toBe(false);
   });
 });
+
+// requirements.txt alone doesn't tell us how to run the app — Flask uses a dev
+// server on :5000, FastAPI needs uvicorn on :8000, Django needs gunicorn against
+// its wsgi module. These assert the right server/port without a Docker build.
+describe("Python framework detection", () => {
+  const write = async (files) => {
+    for (const [name, body] of Object.entries(files)) {
+      const full = join(dir, name);
+      if (name.includes("/")) {
+        await mkdir(join(full, ".."), { recursive: true });
+      }
+      await writeFile(full, body);
+    }
+    return detectFramework(dir).captainDef.dockerfileLines;
+  };
+
+  it("runs Flask via python app.py on :5000 when no web framework is detected", async () => {
+    const dl = await write({ "requirements.txt": "flask\n" });
+    expect(dl).toContain('CMD ["python", "app.py"]');
+    expect(dl).toContain("EXPOSE 5000");
+  });
+
+  it("runs FastAPI via uvicorn on :8000, entry main:app", async () => {
+    const dl = await write({
+      "requirements.txt": "fastapi\nuvicorn\n",
+      "main.py": "",
+    });
+    expect(dl).toContain(
+      'CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8000"]'
+    );
+    expect(dl).toContain("EXPOSE 8000");
+  });
+
+  it("falls back to app:app for FastAPI when main.py is absent", async () => {
+    const dl = await write({ "requirements.txt": "fastapi\n", "app.py": "" });
+    expect(dl).toContain(
+      'CMD ["uvicorn", "app:app", "--host", "0.0.0.0", "--port", "8000"]'
+    );
+  });
+
+  it("runs Django via gunicorn against the wsgi module on :8000", async () => {
+    const dl = await write({
+      "requirements.txt": "django\ngunicorn\n",
+      "manage.py": "",
+      "mysite/wsgi.py": "",
+    });
+    expect(dl).toContain(
+      'CMD ["gunicorn", "mysite.wsgi:application", "--bind", "0.0.0.0:8000"]'
+    );
+    expect(dl).toContain("EXPOSE 8000");
+  });
+
+  it("handles version specifiers and extras in requirements.txt", async () => {
+    const dl = await write({
+      "requirements.txt": "FastAPI>=0.110\nuvicorn[standard]==0.29.0\n",
+      "main.py": "",
+    });
+    expect(dl).toContain(
+      'CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8000"]'
+    );
+  });
+});

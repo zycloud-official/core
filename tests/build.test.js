@@ -22,6 +22,8 @@ const CASES = [
   { name: "node", port: 3000 },
   { name: "vite", port: 80 },
   { name: "python", port: 5000 },
+  { name: "python-fastapi", port: 8000 },
+  { name: "python-django", port: 8000 },
   { name: "nextjs", port: 3000 },
 ];
 

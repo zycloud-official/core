@@ -11,6 +11,8 @@ const EXPECTED = {
   nextjs: "nextjs",
   node: "node",
   python: "python",
+  "python-fastapi": "python",
+  "python-django": "python",
   static: "static",
   dockerfile: "dockerfile",
 };

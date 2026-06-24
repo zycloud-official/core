@@ -131,10 +131,15 @@ describe("POST /webhook — installation event", () => {
     expect(inst?.githubUsername).toBe("bob");
   });
 
-  it("links installation to existing member on install", async () => {
+  it("links installation to an existing account on install", async () => {
     await cleanDb();
-    await prisma.member.create({
-      data: { githubUserId: 1, githubUsername: "carol", sessionToken: "tok" },
+    const account = await prisma.account.create({
+      data: {
+        displayName: "carol",
+        identities: {
+          create: { provider: "GITHUB", providerSubject: "1", providerUsername: "carol" },
+        },
+      },
     });
 
     await webhookRequest("installation", {
@@ -144,9 +149,7 @@ describe("POST /webhook — installation event", () => {
     });
 
     const inst = await prisma.installation.findUnique({ where: { githubInstallationId: 888 } });
-    const member = await prisma.member.findFirst({ where: { githubUsername: "carol" } });
-    expect(inst?.memberId).not.toBeNull();
-    expect(inst?.memberId).toBe(member?.id);
+    expect(inst?.accountId).toBe(account.id);
   });
 
   it("removes the installation record when app is uninstalled", async () => {

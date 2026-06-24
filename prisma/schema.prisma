@@ -1,5 +1,6 @@
 // Production schema — PostgreSQL
 // For local development, use prisma/schema.dev.prisma (SQLite)
+// NOTE: keep this file in lockstep with schema.dev.prisma (only the datasource differs).
 
 generator client {
   provider = "prisma-client-js"
@@ -10,38 +11,73 @@ datasource db {
   url      = env("DATABASE_URL")
 }
 
-model Member {
-  id             Int            @id @default(autoincrement())
-  githubUserId   Int            @unique @map("github_user_id")
-  githubUsername String         @map("github_username")
-  avatarUrl      String?        @map("avatar_url")
-  sessionToken   String?        @map("session_token")
-  createdAt      DateTime       @default(now()) @map("created_at")
-  installations  Installation[]
-  apps           App[]
+// Provider-agnostic zycloud account. Identity is NOT bound to any login provider
+// (GitHub, yangfrenz, …) — those attach as AuthIdentity rows. `email` is the
+// stable linking key when a provider asserts a verified address.
+model Account {
+  id            Int            @id @default(autoincrement())
+  email         String?        @unique
+  displayName   String?        @map("display_name")
+  avatarUrl     String?        @map("avatar_url")
+  role          String         @default("USER")
+  tier          String         @default("FREE")
+  status        String         @default("ACTIVE")
+  createdAt     DateTime       @default(now()) @map("created_at")
+  identities    AuthIdentity[]
+  sessions      Session[]
+  installations Installation[]
+  apps          App[]
 
-  @@map("members")
+  @@map("accounts")
+}
+
+// A linked login method for an account. `providerSubject` is the provider's
+// stable subject (GitHub user id, yangfrenz `sub`); `providerUsername` is the
+// human handle, kept queryable for things like linking GitHub installations.
+model AuthIdentity {
+  id               Int      @id @default(autoincrement())
+  accountId        Int      @map("account_id")
+  provider         String
+  providerSubject  String   @map("provider_subject")
+  providerUsername String?  @map("provider_username")
+  createdAt        DateTime @default(now()) @map("created_at")
+  account          Account  @relation(fields: [accountId], references: [id], onDelete: Cascade)
+
+  @@unique([provider, providerSubject])
+  @@map("auth_identities")
+}
+
+// Opaque server-side session (replaces the old sessionToken column on Member).
+model Session {
+  id        Int      @id @default(autoincrement())
+  token     String   @unique
+  accountId Int      @map("account_id")
+  expiresAt DateTime @map("expires_at")
+  createdAt DateTime @default(now()) @map("created_at")
+  account   Account  @relation(fields: [accountId], references: [id], onDelete: Cascade)
+
+  @@map("sessions")
 }
 
 model Installation {
   id                   Int      @id @default(autoincrement())
   githubInstallationId Int      @unique @map("github_installation_id")
   githubUsername       String   @map("github_username")
-  memberId             Int?     @map("member_id")
+  accountId            Int?     @map("account_id")
   createdAt            DateTime @default(now()) @map("created_at")
-  member               Member?  @relation(fields: [memberId], references: [id])
+  account              Account? @relation(fields: [accountId], references: [id])
 
   @@map("installations")
 }
 
 model App {
   id              Int      @id @default(autoincrement())
-  memberId        Int?     @map("member_id")
+  accountId       Int?     @map("account_id")
   githubRepo      String   @unique @map("github_repo")
   caproverAppName String   @map("caprover_app_name")
   previewUrl      String?  @map("preview_url")
   createdAt       DateTime @default(now()) @map("created_at")
-  member          Member?  @relation(fields: [memberId], references: [id])
+  account         Account? @relation(fields: [accountId], references: [id])
   deploys         Deploy[]
 
   @@map("apps")

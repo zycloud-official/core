@@ -1,20 +1,14 @@
 import { Router } from "express";
 import { prisma } from "../db.js";
+import { loadSession, requireSession } from "../middleware/session.js";
 
 export const dashboardRoutes = Router();
 
-async function getSession(req) {
-  const token = req.cookies?.session;
-  if (!token) return null;
-  return prisma.member.findFirst({ where: { sessionToken: token } });
-}
-
-dashboardRoutes.get("/dashboard", async (req, res) => {
-  const member = await getSession(req);
-  if (!member) return res.redirect("/auth/github");
+dashboardRoutes.get("/dashboard", loadSession, requireSession, async (req, res) => {
+  const account = req.account;
 
   const apps = await prisma.app.findMany({
-    where: { memberId: member.id },
+    where: { accountId: account.id },
     include: {
       deploys: {
         orderBy: { id: "desc" },
@@ -25,9 +19,13 @@ dashboardRoutes.get("/dashboard", async (req, res) => {
   });
 
   res.json({
-    member: {
-      username: member.githubUsername,
-      avatarUrl: member.avatarUrl,
+    account: {
+      id: account.id,
+      displayName: account.displayName,
+      avatarUrl: account.avatarUrl,
+      email: account.email,
+      role: account.role,
+      tier: account.tier,
     },
     apps: apps.map((app) => ({
       githubRepo: app.githubRepo,

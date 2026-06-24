@@ -64,12 +64,18 @@ async function handlePush(payload) {
   const installationId = installation.id;
   console.log(`[webhook] Push to ${owner}/${repo} @ ${sha.slice(0, 7)} → app: ${appName}`);
 
+  // Associate the app with the account that owns the installation (if linked).
+  const inst = await prisma.installation.findUnique({
+    where: { githubInstallationId: installationId },
+  });
+
   const app = await prisma.app.upsert({
     where: { githubRepo: `${owner}/${repo}` },
     create: {
       githubRepo: `${owner}/${repo}`,
       caproverAppName: appName,
       previewUrl: `https://${appName}.zycloud.space`,
+      ...(inst?.accountId ? { accountId: inst.accountId } : {}),
     },
     update: {},
   });
@@ -99,15 +105,16 @@ async function handleInstallation(payload) {
   const username = sender.login.toLowerCase();
 
   if (action === "created") {
-    const existingMember = await prisma.member.findFirst({
-      where: { githubUsername: username },
+    // Link to an account if this GitHub user has already signed in to zycloud.
+    const identity = await prisma.authIdentity.findFirst({
+      where: { provider: "GITHUB", providerUsername: username },
     });
     await prisma.installation.upsert({
       where: { githubInstallationId: installation.id },
       create: {
         githubInstallationId: installation.id,
         githubUsername: username,
-        ...(existingMember ? { memberId: existingMember.id } : {}),
+        ...(identity ? { accountId: identity.accountId } : {}),
       },
       update: {},
     });

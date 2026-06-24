@@ -5,5 +5,7 @@ export async function cleanDb() {
   await prisma.deploy.deleteMany();
   await prisma.app.deleteMany();
   await prisma.installation.deleteMany();
-  await prisma.member.deleteMany();
+  await prisma.session.deleteMany();
+  await prisma.authIdentity.deleteMany();
+  await prisma.account.deleteMany();
 }

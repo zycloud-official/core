@@ -10,6 +10,16 @@ vi.mock("../src/integrations/github/client.js", () => ({
 
 const { default: app } = await import("../src/app.js");
 
+// Create an account with an active session token (the federated logins set this
+// up for real; tests shortcut it).
+async function seedAccount(data, token) {
+  const account = await prisma.account.create({ data });
+  await prisma.session.create({
+    data: { token, accountId: account.id, expiresAt: new Date(Date.now() + 60_000) },
+  });
+  return account;
+}
+
 describe("GET /dashboard", () => {
   it("redirects to /auth/github with no session cookie", async () => {
     const res = await request(app).get("/dashboard");
@@ -25,32 +35,41 @@ describe("GET /dashboard", () => {
     expect(res.headers.location).toContain("/auth/github");
   });
 
-  it("returns member info and an empty apps array when none deployed", async () => {
+  it("redirects with an expired session token", async () => {
     await cleanDb();
-    await prisma.member.create({
-      data: { githubUserId: 1, githubUsername: "alice", sessionToken: "alice-token" },
+    const account = await prisma.account.create({ data: { displayName: "expired" } });
+    await prisma.session.create({
+      data: { token: "expired-token", accountId: account.id, expiresAt: new Date(Date.now() - 1000) },
     });
+
+    const res = await request(app).get("/dashboard").set("Cookie", "session=expired-token");
+    expect(res.status).toBe(302);
+    expect(res.headers.location).toContain("/auth/github");
+  });
+
+  it("returns account info and an empty apps array when none deployed", async () => {
+    await cleanDb();
+    await seedAccount({ displayName: "alice", tier: "FREE" }, "alice-token");
 
     const res = await request(app)
       .get("/dashboard")
       .set("Cookie", "session=alice-token");
 
     expect(res.status).toBe(200);
-    expect(res.body.member.username).toBe("alice");
+    expect(res.body.account.displayName).toBe("alice");
+    expect(res.body.account.tier).toBe("FREE");
     expect(res.body.apps).toEqual([]);
     expect(res.body.installUrl).toContain("github.com/apps/");
   });
 
   it("returns apps ordered newest first", async () => {
     await cleanDb();
-    const member = await prisma.member.create({
-      data: { githubUserId: 2, githubUsername: "bob", sessionToken: "bob-token" },
+    const account = await seedAccount({ displayName: "bob" }, "bob-token");
+    await prisma.app.create({
+      data: { accountId: account.id, githubRepo: "bob/alpha", caproverAppName: "bob-alpha" },
     });
     await prisma.app.create({
-      data: { memberId: member.id, githubRepo: "bob/alpha", caproverAppName: "bob-alpha" },
-    });
-    await prisma.app.create({
-      data: { memberId: member.id, githubRepo: "bob/beta", caproverAppName: "bob-beta" },
+      data: { accountId: account.id, githubRepo: "bob/beta", caproverAppName: "bob-beta" },
     });
 
     const res = await request(app)
@@ -63,12 +82,10 @@ describe("GET /dashboard", () => {
 
   it("returns the most recent deploy status for each app", async () => {
     await cleanDb();
-    const member = await prisma.member.create({
-      data: { githubUserId: 3, githubUsername: "carol", sessionToken: "carol-token" },
-    });
+    const account = await seedAccount({ displayName: "carol" }, "carol-token");
     const deployedApp = await prisma.app.create({
       data: {
-        memberId: member.id,
+        accountId: account.id,
         githubRepo: "carol/myapp",
         caproverAppName: "carol-myapp",
         previewUrl: "https://carol-myapp.zycloud.space",
@@ -91,16 +108,12 @@ describe("GET /dashboard", () => {
     expect(res.body.apps[0].lastCommit).toBe("bbb222");
   });
 
-  it("does not expose apps belonging to other members", async () => {
+  it("does not expose apps belonging to other accounts", async () => {
     await cleanDb();
-    const alice = await prisma.member.create({
-      data: { githubUserId: 4, githubUsername: "alice2", sessionToken: "alice2-token" },
-    });
-    const bob = await prisma.member.create({
-      data: { githubUserId: 5, githubUsername: "bob2", sessionToken: "bob2-token" },
-    });
+    await seedAccount({ displayName: "alice2" }, "alice2-token");
+    const bob = await seedAccount({ displayName: "bob2" }, "bob2-token");
     await prisma.app.create({
-      data: { memberId: bob.id, githubRepo: "bob2/secret", caproverAppName: "bob2-secret" },
+      data: { accountId: bob.id, githubRepo: "bob2/secret", caproverAppName: "bob2-secret" },
     });
 
     const res = await request(app)

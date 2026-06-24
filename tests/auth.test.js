@@ -19,6 +19,14 @@ vi.mock("../src/integrations/github/client.js", () => ({
 
 const { default: app } = await import("../src/app.js");
 
+// Find the account behind a GitHub identity, by the provider subject (user id).
+function accountByGithubId(id) {
+  return prisma.account.findFirst({
+    where: { identities: { some: { provider: "GITHUB", providerSubject: String(id) } } },
+    include: { identities: true, sessions: true },
+  });
+}
+
 describe("GET /auth/github", () => {
   it("redirects to the GitHub OAuth URL", async () => {
     const res = await request(app).get("/auth/github");
@@ -33,7 +41,7 @@ describe("GET /auth/callback", () => {
     expect(res.status).toBe(400);
   });
 
-  it("creates a member record and sets a session cookie on valid code", async () => {
+  it("creates an account + GITHUB identity + session on valid code", async () => {
     await cleanDb();
     vi.stubGlobal("fetch", vi.fn().mockResolvedValueOnce({
       ok: true,
@@ -45,29 +53,43 @@ describe("GET /auth/callback", () => {
     expect(res.headers["set-cookie"]).toBeDefined();
     expect(res.headers["set-cookie"][0]).toContain("session=");
 
-    const member = await prisma.member.findUnique({ where: { githubUserId: 1001 } });
-    expect(member?.githubUsername).toBe("alice");
+    const account = await accountByGithubId(1001);
+    expect(account).not.toBeNull();
+    expect(account.displayName).toBe("alice");
+    expect(account.identities[0].providerUsername).toBe("alice");
+    expect(account.sessions).toHaveLength(1);
   });
 
-  it("updates existing member on repeat login", async () => {
+  it("reuses the same account (no duplicate) on repeat login", async () => {
     await cleanDb();
-    await prisma.member.create({
-      data: { githubUserId: 2002, githubUsername: "bob_old", sessionToken: "old-token" },
-    });
+    // First login.
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValueOnce({
+      ok: true,
+      json: async () => ({ id: 2002, login: "bob_old", avatar_url: "" }),
+    }));
+    await request(app).get("/auth/callback?code=first");
+    const first = await accountByGithubId(2002);
 
+    // Second login — GitHub handle changed; same underlying user id.
     vi.stubGlobal("fetch", vi.fn().mockResolvedValueOnce({
       ok: true,
       json: async () => ({ id: 2002, login: "Bob", avatar_url: "" }),
     }));
+    await request(app).get("/auth/callback?code=second");
 
-    await request(app).get("/auth/callback?code=anycode");
+    const accounts = await prisma.account.findMany({
+      where: { identities: { some: { provider: "GITHUB", providerSubject: "2002" } } },
+    });
+    expect(accounts).toHaveLength(1);
+    expect(accounts[0].id).toBe(first.id);
+    expect(accounts[0].displayName).toBe("bob");
 
-    const member = await prisma.member.findUnique({ where: { githubUserId: 2002 } });
-    expect(member?.githubUsername).toBe("bob");
-    expect(member?.sessionToken).not.toBe("old-token");
+    // A fresh session was minted (two logins → two sessions for the account).
+    const sessions = await prisma.session.count({ where: { accountId: first.id } });
+    expect(sessions).toBe(2);
   });
 
-  it("links a pre-existing installation to the member at OAuth time", async () => {
+  it("links a pre-existing installation to the account at OAuth time", async () => {
     await cleanDb();
     await prisma.installation.create({
       data: { githubInstallationId: 555, githubUsername: "carol" },
@@ -80,17 +102,22 @@ describe("GET /auth/callback", () => {
 
     await request(app).get("/auth/callback?code=anycode");
 
-    const member = await prisma.member.findUnique({ where: { githubUserId: 3003 } });
+    const account = await accountByGithubId(3003);
     const inst = await prisma.installation.findUnique({ where: { githubInstallationId: 555 } });
-    expect(inst?.memberId).toBe(member?.id);
+    expect(inst?.accountId).toBe(account.id);
   });
 });
 
 describe("POST /auth/logout", () => {
-  it("clears the session token and cookie", async () => {
+  it("revokes the session row and clears the cookie", async () => {
     await cleanDb();
-    await prisma.member.create({
-      data: { githubUserId: 4004, githubUsername: "dave", sessionToken: "token-to-clear" },
+    const account = await prisma.account.create({ data: { displayName: "dave" } });
+    await prisma.session.create({
+      data: {
+        token: "token-to-clear",
+        accountId: account.id,
+        expiresAt: new Date(Date.now() + 60_000),
+      },
     });
 
     const res = await request(app)
@@ -100,7 +127,7 @@ describe("POST /auth/logout", () => {
     expect(res.status).toBe(200);
     expect(res.headers["set-cookie"][0]).toContain("session=;");
 
-    const member = await prisma.member.findUnique({ where: { githubUserId: 4004 } });
-    expect(member?.sessionToken).toBeNull();
+    const session = await prisma.session.findUnique({ where: { token: "token-to-clear" } });
+    expect(session).toBeNull();
   });
 });

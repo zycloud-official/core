@@ -1,9 +1,13 @@
 import { Router } from "express";
-import { randomBytes } from "node:crypto";
 import { githubApp } from "./client.js";
 import { prisma } from "../../db.js";
+import { createSession, clearSession } from "../../middleware/session.js";
 
 export const githubOAuthRoutes = Router();
+
+// GitHub is one login *method* (and the repo-source integration) — not the
+// identity. The callback resolves the provider-agnostic zycloud Account behind
+// this GitHub user, attaching a GITHUB AuthIdentity, then opens a session.
 
 // Step 1: redirect to GitHub OAuth
 githubOAuthRoutes.get("/auth/github", (_req, res) => {
@@ -31,46 +35,54 @@ githubOAuthRoutes.get("/auth/callback", async (req, res) => {
     return res.status(502).json({ error: "Failed to fetch GitHub user" });
   const user = await userRes.json();
 
-  const sessionToken = randomBytes(32).toString("hex");
+  const username = user.login.toLowerCase();
+  const subject = String(user.id);
+  const profile = {
+    displayName: user.name || username,
+    avatarUrl: user.avatar_url || null,
+  };
 
-  const member = await prisma.member.upsert({
-    where: { githubUserId: user.id },
-    create: {
-      githubUserId: user.id,
-      githubUsername: user.login.toLowerCase(),
-      avatarUrl: user.avatar_url,
-      sessionToken,
-    },
-    update: {
-      githubUsername: user.login.toLowerCase(),
-      avatarUrl: user.avatar_url,
-      sessionToken,
-    },
+  // Resolve or create the account behind this GitHub identity.
+  const identity = await prisma.authIdentity.findUnique({
+    where: { provider_providerSubject: { provider: "GITHUB", providerSubject: subject } },
   });
 
-  // Link any installations that arrived before this user OAuth'd
+  let account;
+  if (identity) {
+    account = await prisma.account.update({
+      where: { id: identity.accountId },
+      data: {
+        ...profile,
+        ...(user.email ? { email: user.email } : {}),
+      },
+    });
+    await prisma.authIdentity.update({
+      where: { id: identity.id },
+      data: { providerUsername: username },
+    });
+  } else {
+    account = await prisma.account.create({
+      data: {
+        ...profile,
+        ...(user.email ? { email: user.email } : {}),
+        identities: {
+          create: { provider: "GITHUB", providerSubject: subject, providerUsername: username },
+        },
+      },
+    });
+  }
+
+  // Link any installations that arrived before this user signed in.
   await prisma.installation.updateMany({
-    where: { githubUsername: user.login.toLowerCase(), memberId: null },
-    data: { memberId: member.id },
+    where: { githubUsername: username, accountId: null },
+    data: { accountId: account.id },
   });
 
-  res.cookie("session", sessionToken, {
-    httpOnly: true,
-    secure: true,
-    sameSite: "lax",
-    path: "/",
-    maxAge: 30 * 24 * 60 * 60 * 1000, // 30 days in ms
-  });
+  await createSession(res, account.id);
   res.redirect(`${process.env.BASE_URL}/dashboard`);
 });
 
 githubOAuthRoutes.post("/auth/logout", async (req, res) => {
-  const token = req.cookies?.session;
-  if (token) {
-    await prisma.member.updateMany({
-      where: { sessionToken: token },
-      data: { sessionToken: null },
-    });
-  }
-  res.clearCookie("session", { path: "/" }).json({ ok: true });
+  await clearSession(res, req.cookies?.session);
+  res.json({ ok: true });
 });

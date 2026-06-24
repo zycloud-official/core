@@ -7,10 +7,15 @@ import { rm, mkdir } from "node:fs/promises";
 export async function setup() {
   await mkdir("./data", { recursive: true });
 
-  // Remove all SQLite files for the test DB so we start clean
-  await rm("./data/test.db", { force: true });
-  await rm("./data/test.db-shm", { force: true });
-  await rm("./data/test.db-wal", { force: true });
+  // Remove all SQLite files for the test DB so we start clean. Prisma resolves
+  // a relative `file:` URL against the SCHEMA directory (prisma/), so the real
+  // DB lives at prisma/data/test.db — delete both that and the CWD-relative
+  // path to be robust to either resolution.
+  for (const base of ["./data/test.db", "./prisma/data/test.db"]) {
+    await rm(base, { force: true });
+    await rm(`${base}-shm`, { force: true });
+    await rm(`${base}-wal`, { force: true });
+  }
 
   execSync("yarn prisma db push --schema=prisma/schema.dev.prisma", {
     env: { ...process.env, DATABASE_URL: "file:./data/test.db" },

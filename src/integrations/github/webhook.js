@@ -64,9 +64,10 @@ async function handlePush(payload) {
   const installationId = installation.id;
   console.log(`[webhook] Push to ${owner}/${repo} @ ${sha.slice(0, 7)} → app: ${appName}`);
 
-  // Associate the app with the account that owns the installation (if linked).
-  const inst = await prisma.installation.findUnique({
-    where: { githubInstallationId: installationId },
+  // Associate the app with its GitHub source connection (and the account that
+  // owns it, if linked).
+  const connection = await prisma.sourceConnection.findUnique({
+    where: { provider_externalId: { provider: "GITHUB", externalId: String(installationId) } },
   });
 
   const app = await prisma.app.upsert({
@@ -75,7 +76,8 @@ async function handlePush(payload) {
       githubRepo: `${owner}/${repo}`,
       caproverAppName: appName,
       previewUrl: `https://${appName}.zycloud.space`,
-      ...(inst?.accountId ? { accountId: inst.accountId } : {}),
+      ...(connection ? { sourceConnectionId: connection.id } : {}),
+      ...(connection?.accountId ? { accountId: connection.accountId } : {}),
     },
     update: {},
   });
@@ -109,19 +111,20 @@ async function handleInstallation(payload) {
     const identity = await prisma.authIdentity.findFirst({
       where: { provider: "GITHUB", providerUsername: username },
     });
-    await prisma.installation.upsert({
-      where: { githubInstallationId: installation.id },
+    await prisma.sourceConnection.upsert({
+      where: { provider_externalId: { provider: "GITHUB", externalId: String(installation.id) } },
       create: {
-        githubInstallationId: installation.id,
-        githubUsername: username,
+        provider: "GITHUB",
+        externalId: String(installation.id),
+        ownerLogin: username,
         ...(identity ? { accountId: identity.accountId } : {}),
       },
       update: {},
     });
     console.log(`[webhook] App installed by: ${username}`);
   } else if (action === "deleted") {
-    await prisma.installation.deleteMany({
-      where: { githubInstallationId: installation.id },
+    await prisma.sourceConnection.deleteMany({
+      where: { provider: "GITHUB", externalId: String(installation.id) },
     });
     console.log(`[webhook] App uninstalled by: ${username}`);
   }

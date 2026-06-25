@@ -72,9 +72,9 @@ githubOAuthRoutes.get("/auth/callback", async (req, res) => {
     });
   }
 
-  // Link any installations that arrived before this user signed in.
-  await prisma.installation.updateMany({
-    where: { githubUsername: username, accountId: null },
+  // Link any GitHub source connections that arrived before this user signed in.
+  await prisma.sourceConnection.updateMany({
+    where: { provider: "GITHUB", ownerLogin: username, accountId: null },
     data: { accountId: account.id },
   });
 

@@ -15,13 +15,14 @@ Deployed at `github-integration.zycloud.space` on the **zycloud** CapRover insta
 | `src/index.js` | Server entry — boots `app.js` and listens |
 | `src/app.js` | Express app — middleware and route registration |
 | `src/db.js` | Prisma client singleton |
+| `src/middleware/session.js` | Account sessions — `createSession`/`clearSession`/`loadSession`/`requireSession` (opaque-token cookie) |
 | `src/caprover.js` | CapRover API client (login, create app, upload, SSL) |
 | `src/detect.js` | Framework detection → generates `captain-definition` (see [Framework templates](#framework-templates)) |
 | `src/deploy.js` | Deploy pipeline: download → extract → inject → repack → upload |
 | `src/integrations/github/client.js` | GitHub App instance + `downloadTarball` |
-| `src/integrations/github/oauth.js` | GitHub OAuth: `GET /auth/github`, `/auth/callback`, `POST /auth/logout` (`githubOAuthRoutes`) |
-| `src/integrations/github/webhook.js` | `POST /webhook` — HMAC verify + event handlers (`githubWebhookRoutes`) |
-| `src/routes/dashboard.js` | `GET /dashboard` — member apps + deploy status |
+| `src/integrations/github/oauth.js` | GitHub login: `GET /auth/github`, `/auth/callback`, `POST /auth/logout` — resolves the account behind a GITHUB identity (`githubOAuthRoutes`) |
+| `src/integrations/github/webhook.js` | `POST /webhook` — HMAC verify + event handlers; installs become GitHub `SourceConnection`s (`githubWebhookRoutes`) |
+| `src/routes/dashboard.js` | `GET /dashboard` — the account + its apps and deploy status |
 | `prisma/schema.prisma` | Production schema (PostgreSQL) |
 | `prisma/schema.dev.prisma` | Development schema (SQLite) |
 | `tests/fixtures/` | Per-framework sample apps for detection + build tests |
@@ -199,10 +200,12 @@ This project will evolve into **core** — the central backend for the entire zy
 - [ ] More templates: Go, Rust, SvelteKit/Astro/Nuxt, static-site generators
 - [ ] Build logs streamed to dashboard
 
-**Core platform**
+**Core platform** (see root `ZYCLOUD-PLAN.md` for the accounts + federation initiative)
 
-- [ ] Shared zycloud account system (replaces GitHub-only Member model)
-- [ ] GitHub integration linked to zycloud account (not standalone)
+- [x] Shared zycloud account system — provider-agnostic `Account` + `AuthIdentity` + `Session` (replaces the GitHub-only Member model)
+- [x] GitHub linked to the account as a `SourceConnection` (identity vs. deployment source decoupled; provider-agnostic, ready for GitLab/others)
+- [ ] "Sign in with yangfrenz.club" — `core` as an OIDC Relying Party (federated login)
+- [ ] Map yangfrenz membership → zycloud tier/role (friend perks)
 - [ ] REST API (`src/routes/api/`) for separate dashboard and monitor frontends
 - [ ] Branch previews (not just default branch)
 - [ ] Delete CapRover app when repo is disconnected

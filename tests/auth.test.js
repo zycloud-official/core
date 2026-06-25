@@ -89,10 +89,10 @@ describe("GET /auth/callback", () => {
     expect(sessions).toBe(2);
   });
 
-  it("links a pre-existing installation to the account at OAuth time", async () => {
+  it("links a pre-existing source connection to the account at OAuth time", async () => {
     await cleanDb();
-    await prisma.installation.create({
-      data: { githubInstallationId: 555, githubUsername: "carol" },
+    await prisma.sourceConnection.create({
+      data: { provider: "GITHUB", externalId: "555", ownerLogin: "carol" },
     });
 
     vi.stubGlobal("fetch", vi.fn().mockResolvedValueOnce({
@@ -103,8 +103,10 @@ describe("GET /auth/callback", () => {
     await request(app).get("/auth/callback?code=anycode");
 
     const account = await accountByGithubId(3003);
-    const inst = await prisma.installation.findUnique({ where: { githubInstallationId: 555 } });
-    expect(inst?.accountId).toBe(account.id);
+    const conn = await prisma.sourceConnection.findUnique({
+      where: { provider_externalId: { provider: "GITHUB", externalId: "555" } },
+    });
+    expect(conn?.accountId).toBe(account.id);
   });
 });
 

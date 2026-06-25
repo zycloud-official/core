@@ -103,6 +103,20 @@ describe("POST /webhook — push event", () => {
     expect(deploy?.commitSha).toBe("abc123def456");
   });
 
+  it("links the deployed app to its source connection and account", async () => {
+    await cleanDb();
+    const account = await prisma.account.create({ data: { displayName: "alice" } });
+    const conn = await prisma.sourceConnection.create({
+      data: { provider: "GITHUB", externalId: "42", ownerLogin: "alice", accountId: account.id },
+    });
+
+    await webhookRequest("push", pushPayload("main"));
+
+    const app = await prisma.app.findUnique({ where: { githubRepo: "alice/myrepo" } });
+    expect(app?.sourceConnectionId).toBe(conn.id);
+    expect(app?.accountId).toBe(account.id);
+  });
+
   it("sanitises owner/repo names into a valid CapRover app name", async () => {
     await cleanDb();
     const payload = {
@@ -118,7 +132,12 @@ describe("POST /webhook — push event", () => {
 });
 
 describe("POST /webhook — installation event", () => {
-  it("creates an installation record when app is installed", async () => {
+  const connByExternalId = (externalId) =>
+    prisma.sourceConnection.findUnique({
+      where: { provider_externalId: { provider: "GITHUB", externalId } },
+    });
+
+  it("creates a source connection when the app is installed", async () => {
     await cleanDb();
     const res = await webhookRequest("installation", {
       action: "created",
@@ -127,11 +146,12 @@ describe("POST /webhook — installation event", () => {
     });
     expect(res.status).toBe(200);
 
-    const inst = await prisma.installation.findUnique({ where: { githubInstallationId: 999 } });
-    expect(inst?.githubUsername).toBe("bob");
+    const conn = await connByExternalId("999");
+    expect(conn?.provider).toBe("GITHUB");
+    expect(conn?.ownerLogin).toBe("bob");
   });
 
-  it("links installation to an existing account on install", async () => {
+  it("links the source connection to an existing account on install", async () => {
     await cleanDb();
     const account = await prisma.account.create({
       data: {
@@ -148,14 +168,14 @@ describe("POST /webhook — installation event", () => {
       sender: { login: "Carol" },
     });
 
-    const inst = await prisma.installation.findUnique({ where: { githubInstallationId: 888 } });
-    expect(inst?.accountId).toBe(account.id);
+    const conn = await connByExternalId("888");
+    expect(conn?.accountId).toBe(account.id);
   });
 
-  it("removes the installation record when app is uninstalled", async () => {
+  it("removes the source connection when the app is uninstalled", async () => {
     await cleanDb();
-    await prisma.installation.create({
-      data: { githubInstallationId: 777, githubUsername: "dave" },
+    await prisma.sourceConnection.create({
+      data: { provider: "GITHUB", externalId: "777", ownerLogin: "dave" },
     });
 
     await webhookRequest("installation", {
@@ -164,7 +184,6 @@ describe("POST /webhook — installation event", () => {
       sender: { login: "dave" },
     });
 
-    const inst = await prisma.installation.findUnique({ where: { githubInstallationId: 777 } });
-    expect(inst).toBeNull();
+    expect(await connByExternalId("777")).toBeNull();
   });
 });

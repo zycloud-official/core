@@ -10,6 +10,10 @@ import { constants } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import * as tar from "tar";
+// SEAM: source fetch is the only provider-specific step in this pipeline. Today
+// it's GitHub-only; when a second provider (GitLab, …) lands, dispatch on the
+// app's SourceConnection.provider to the right downloadTarball implementation
+// instead of importing GitHub's directly. The rest of the pipeline is agnostic.
 import { downloadTarball } from "./integrations/github/client.js";
 import { detectFramework } from "./detect.js";
 import { getAppDefinition, createApp, uploadTarball, enableSsl } from "./caprover.js";

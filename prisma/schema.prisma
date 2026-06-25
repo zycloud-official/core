@@ -15,25 +15,25 @@ datasource db {
 // (GitHub, yangfrenz, …) — those attach as AuthIdentity rows. `email` is the
 // stable linking key when a provider asserts a verified address.
 model Account {
-  id            Int            @id @default(autoincrement())
-  email         String?        @unique
-  displayName   String?        @map("display_name")
-  avatarUrl     String?        @map("avatar_url")
-  role          String         @default("USER")
-  tier          String         @default("FREE")
-  status        String         @default("ACTIVE")
-  createdAt     DateTime       @default(now()) @map("created_at")
-  identities    AuthIdentity[]
-  sessions      Session[]
-  installations Installation[]
-  apps          App[]
+  id              Int                @id @default(autoincrement())
+  email           String?            @unique
+  displayName     String?            @map("display_name")
+  avatarUrl       String?            @map("avatar_url")
+  role            String             @default("USER")
+  tier            String             @default("FREE")
+  status          String             @default("ACTIVE")
+  createdAt       DateTime           @default(now()) @map("created_at")
+  identities      AuthIdentity[]
+  sessions        Session[]
+  sourceConnections SourceConnection[]
+  apps            App[]
 
   @@map("accounts")
 }
 
 // A linked login method for an account. `providerSubject` is the provider's
 // stable subject (GitHub user id, yangfrenz `sub`); `providerUsername` is the
-// human handle, kept queryable for things like linking GitHub installations.
+// human handle, kept queryable for things like linking source connections.
 model AuthIdentity {
   id               Int      @id @default(autoincrement())
   accountId        Int      @map("account_id")
@@ -59,26 +59,35 @@ model Session {
   @@map("sessions")
 }
 
-model Installation {
-  id                   Int      @id @default(autoincrement())
-  githubInstallationId Int      @unique @map("github_installation_id")
-  githubUsername       String   @map("github_username")
-  accountId            Int?     @map("account_id")
-  createdAt            DateTime @default(now()) @map("created_at")
-  account              Account? @relation(fields: [accountId], references: [id])
+// A deployment source linked to an account — provider-agnostic so GitLab/others
+// can be added later. For GitHub: `externalId` is the App installation id and
+// `ownerLogin` the GitHub owner login. `accountId` is null until the owner signs
+// in (back-linked at login by ownerLogin).
+model SourceConnection {
+  id         Int      @id @default(autoincrement())
+  provider   String
+  externalId String   @map("external_id")
+  ownerLogin String   @map("owner_login")
+  accountId  Int?     @map("account_id")
+  createdAt  DateTime @default(now()) @map("created_at")
+  account    Account? @relation(fields: [accountId], references: [id])
+  apps       App[]
 
-  @@map("installations")
+  @@unique([provider, externalId])
+  @@map("source_connections")
 }
 
 model App {
-  id              Int      @id @default(autoincrement())
-  accountId       Int?     @map("account_id")
-  githubRepo      String   @unique @map("github_repo")
-  caproverAppName String   @map("caprover_app_name")
-  previewUrl      String?  @map("preview_url")
-  createdAt       DateTime @default(now()) @map("created_at")
-  account         Account? @relation(fields: [accountId], references: [id])
-  deploys         Deploy[]
+  id                 Int               @id @default(autoincrement())
+  accountId          Int?              @map("account_id")
+  sourceConnectionId Int?              @map("source_connection_id")
+  githubRepo         String            @unique @map("github_repo")
+  caproverAppName    String            @map("caprover_app_name")
+  previewUrl         String?           @map("preview_url")
+  createdAt          DateTime          @default(now()) @map("created_at")
+  account            Account?          @relation(fields: [accountId], references: [id])
+  sourceConnection   SourceConnection? @relation(fields: [sourceConnectionId], references: [id])
+  deploys            Deploy[]
 
   @@map("apps")
 }

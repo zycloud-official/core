@@ -10,6 +10,7 @@ export default defineConfig({
       GITHUB_WEBHOOK_SECRET: "test-webhook-secret",
       GITHUB_APP_SLUG: "test-app",
       BASE_URL: "https://example.com",
+      APP_URL: "https://app.example.com",
       CAPROVER_URL: "https://captain.example.com",
       CAPROVER_PASSWORD: "test-password",
     },

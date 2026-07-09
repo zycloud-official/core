@@ -27,6 +27,7 @@
     "@octokit/app": "^15.1.0",
     "@prisma/client": "^6.0.0",
     "cookie-parser": "^1.4.7",
+    "cors": "^2.8.6",
     "dotenv": "^16.4.0",
     "express": "^5.0.0",
     "prisma": "^6.0.0",

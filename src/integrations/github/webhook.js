@@ -14,7 +14,7 @@ function verifySignature(rawBody, signature, secret) {
   return timingSafeEqual(sigBuf, expBuf);
 }
 
-githubWebhookRoutes.post("/webhook", async (req, res) => {
+githubWebhookRoutes.post("/webhook/github", async (req, res) => {
   const sig = req.headers["x-hub-signature-256"];
   if (
     !sig ||

@@ -13,13 +13,13 @@ export const githubOAuthRoutes = Router();
 githubOAuthRoutes.get("/auth/github", (_req, res) => {
   const { url } = githubApp.oauth.getWebFlowAuthorizationUrl({
     scopes: [],
-    redirectUrl: `${process.env.BASE_URL}/auth/callback`,
+    redirectUrl: `${process.env.BASE_URL}/callback/github`,
   });
   res.redirect(url);
 });
 
 // Step 2: GitHub redirects back with ?code=
-githubOAuthRoutes.get("/auth/callback", async (req, res) => {
+githubOAuthRoutes.get("/callback/github", async (req, res) => {
   const { code } = req.query;
   if (!code) return res.status(400).json({ error: "Missing OAuth code" });
 
@@ -28,7 +28,7 @@ githubOAuthRoutes.get("/auth/callback", async (req, res) => {
   const userRes = await fetch("https://api.github.com/user", {
     headers: {
       Authorization: `Bearer ${authentication.token}`,
-      "User-Agent": "github-integration/1.0",
+      "User-Agent": "zycloud-core/1.0",
     },
   });
   if (!userRes.ok)
@@ -44,7 +44,12 @@ githubOAuthRoutes.get("/auth/callback", async (req, res) => {
 
   // Resolve or create the account behind this GitHub identity.
   const identity = await prisma.authIdentity.findUnique({
-    where: { provider_providerSubject: { provider: "GITHUB", providerSubject: subject } },
+    where: {
+      provider_providerSubject: {
+        provider: "GITHUB",
+        providerSubject: subject,
+      },
+    },
   });
 
   let account;
@@ -66,7 +71,11 @@ githubOAuthRoutes.get("/auth/callback", async (req, res) => {
         ...profile,
         ...(user.email ? { email: user.email } : {}),
         identities: {
-          create: { provider: "GITHUB", providerSubject: subject, providerUsername: username },
+          create: {
+            provider: "GITHUB",
+            providerSubject: subject,
+            providerUsername: username,
+          },
         },
       },
     });
@@ -79,7 +88,7 @@ githubOAuthRoutes.get("/auth/callback", async (req, res) => {
   });
 
   await createSession(res, account.id);
-  res.redirect(`${process.env.BASE_URL}/dashboard`);
+  res.redirect(`${process.env.APP_URL}/dashboard`);
 });
 
 githubOAuthRoutes.post("/auth/logout", async (req, res) => {

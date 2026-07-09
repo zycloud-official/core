@@ -28,17 +28,17 @@ function sign(body) {
 function webhookRequest(event, payload) {
   const body = JSON.stringify(payload);
   return request(app)
-    .post("/webhook")
+    .post("/webhook/github")
     .set("Content-Type", "application/json")
     .set("x-github-event", event)
     .set("x-hub-signature-256", sign(body))
     .send(body);
 }
 
-describe("POST /webhook — signature verification", () => {
+describe("POST /webhook/github — signature verification", () => {
   it("returns 401 with no signature header", async () => {
     const res = await request(app)
-      .post("/webhook")
+      .post("/webhook/github")
       .set("Content-Type", "application/json")
       .send(JSON.stringify({}));
     expect(res.status).toBe(401);
@@ -46,7 +46,7 @@ describe("POST /webhook — signature verification", () => {
 
   it("returns 401 with an incorrect signature", async () => {
     const res = await request(app)
-      .post("/webhook")
+      .post("/webhook/github")
       .set("Content-Type", "application/json")
       .set("x-github-event", "push")
       .set("x-hub-signature-256", "sha256=deadbeef")
@@ -55,7 +55,7 @@ describe("POST /webhook — signature verification", () => {
   });
 });
 
-describe("POST /webhook — push event", () => {
+describe("POST /webhook/github — push event", () => {
   const pushPayload = (branch = "main") => ({
     ref: `refs/heads/${branch}`,
     after: "abc123def456",
@@ -131,7 +131,7 @@ describe("POST /webhook — push event", () => {
   });
 });
 
-describe("POST /webhook — installation event", () => {
+describe("POST /webhook/github — installation event", () => {
   const connByExternalId = (externalId) =>
     prisma.sourceConnection.findUnique({
       where: { provider_externalId: { provider: "GITHUB", externalId } },

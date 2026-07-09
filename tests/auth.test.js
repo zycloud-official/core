@@ -35,9 +35,9 @@ describe("GET /auth/github", () => {
   });
 });
 
-describe("GET /auth/callback", () => {
+describe("GET /callback/github", () => {
   it("returns 400 when no code param is present", async () => {
-    const res = await request(app).get("/auth/callback");
+    const res = await request(app).get("/callback/github");
     expect(res.status).toBe(400);
   });
 
@@ -48,7 +48,7 @@ describe("GET /auth/callback", () => {
       json: async () => ({ id: 1001, login: "Alice", avatar_url: "https://avatars.example.com/alice" }),
     }));
 
-    const res = await request(app).get("/auth/callback?code=validcode");
+    const res = await request(app).get("/callback/github?code=validcode");
     expect(res.status).toBe(302);
     expect(res.headers["set-cookie"]).toBeDefined();
     expect(res.headers["set-cookie"][0]).toContain("session=");
@@ -67,7 +67,7 @@ describe("GET /auth/callback", () => {
       ok: true,
       json: async () => ({ id: 2002, login: "bob_old", avatar_url: "" }),
     }));
-    await request(app).get("/auth/callback?code=first");
+    await request(app).get("/callback/github?code=first");
     const first = await accountByGithubId(2002);
 
     // Second login — GitHub handle changed; same underlying user id.
@@ -75,7 +75,7 @@ describe("GET /auth/callback", () => {
       ok: true,
       json: async () => ({ id: 2002, login: "Bob", avatar_url: "" }),
     }));
-    await request(app).get("/auth/callback?code=second");
+    await request(app).get("/callback/github?code=second");
 
     const accounts = await prisma.account.findMany({
       where: { identities: { some: { provider: "GITHUB", providerSubject: "2002" } } },
@@ -100,7 +100,7 @@ describe("GET /auth/callback", () => {
       json: async () => ({ id: 3003, login: "Carol", avatar_url: "" }),
     }));
 
-    await request(app).get("/auth/callback?code=anycode");
+    await request(app).get("/callback/github?code=anycode");
 
     const account = await accountByGithubId(3003);
     const conn = await prisma.sourceConnection.findUnique({

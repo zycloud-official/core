@@ -2,7 +2,7 @@
 
 A Netlify-style deployment platform for yangfrenz.club members, powered by a GitHub App and CapRover. Members connect their GitHub repos, and every push to the default branch automatically builds and deploys their app — no CLI, no credentials to manage.
 
-Deployed at `github-integration.zycloud.space` on the **zycloud** CapRover instance. Member apps are served at `https://{owner}-{repo}.zycloud.space`.
+Deployed at `core.zycloud.space` on the **zycloud** CapRover instance. A separate frontend SPA project is deployed at `app.zycloud.space` and consumes this API. Member apps are served at `https://{owner}-{repo}.zycloud.space`.
 
 **Package manager: yarn** — use `yarn` for all installs and script runs. Do not use `npm` or `npx`; use `yarn` equivalents instead.
 
@@ -10,23 +10,23 @@ Deployed at `github-integration.zycloud.space` on the **zycloud** CapRover insta
 
 ## File map
 
-| File | Purpose |
-|------|---------|
-| `src/index.js` | Server entry — boots `app.js` and listens |
-| `src/app.js` | Express app — middleware and route registration |
-| `src/db.js` | Prisma client singleton |
-| `src/middleware/session.js` | Account sessions — `createSession`/`clearSession`/`loadSession`/`requireSession` (opaque-token cookie) |
-| `src/caprover.js` | CapRover API client (login, create app, upload, SSL) |
-| `src/detect.js` | Framework detection → generates `captain-definition` (see [Framework templates](#framework-templates)) |
-| `src/deploy.js` | Deploy pipeline: download → extract → inject → repack → upload |
-| `src/integrations/github/client.js` | GitHub App instance + `downloadTarball` |
-| `src/integrations/github/oauth.js` | GitHub login: `GET /auth/github`, `/auth/callback`, `POST /auth/logout` — resolves the account behind a GITHUB identity (`githubOAuthRoutes`) |
-| `src/integrations/github/webhook.js` | `POST /webhook` — HMAC verify + event handlers; installs become GitHub `SourceConnection`s (`githubWebhookRoutes`) |
-| `src/routes/dashboard.js` | `GET /dashboard` — the account + its apps and deploy status |
-| `prisma/schema.prisma` | Production schema (PostgreSQL) |
-| `prisma/schema.dev.prisma` | Development schema (SQLite) |
-| `tests/fixtures/` | Per-framework sample apps for detection + build tests |
-| `scripts/start.sh` | Container entrypoint — runs `prisma db push` then starts server |
+| File                                 | Purpose                                                                                                                                         |
+| ------------------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------- |
+| `src/index.js`                       | Server entry — boots `app.js` and listens                                                                                                       |
+| `src/app.js`                         | Express app — middleware and route registration                                                                                                 |
+| `src/db.js`                          | Prisma client singleton                                                                                                                         |
+| `src/middleware/session.js`          | Account sessions — `createSession`/`clearSession`/`loadSession`/`requireSession` (opaque-token cookie)                                          |
+| `src/caprover.js`                    | CapRover API client (login, create app, upload, SSL)                                                                                            |
+| `src/detect.js`                      | Framework detection → generates `captain-definition` (see [Framework templates](#framework-templates))                                          |
+| `src/deploy.js`                      | Deploy pipeline: download → extract → inject → repack → upload                                                                                  |
+| `src/integrations/github/client.js`  | GitHub App instance + `downloadTarball`                                                                                                         |
+| `src/integrations/github/oauth.js`   | GitHub login: `GET /auth/github`, `/callback/github`, `POST /auth/logout` — resolves the account behind a GITHUB identity (`githubOAuthRoutes`) |
+| `src/integrations/github/webhook.js` | `POST /webhook/github` — HMAC verify + event handlers; installs become GitHub `SourceConnection`s (`githubWebhookRoutes`)                       |
+| `src/routes/dashboard.js`            | `GET /dashboard` — the account + its apps and deploy status                                                                                     |
+| `prisma/schema.prisma`               | Production schema (PostgreSQL)                                                                                                                  |
+| `prisma/schema.dev.prisma`           | Development schema (SQLite)                                                                                                                     |
+| `tests/fixtures/`                    | Per-framework sample apps for detection + build tests                                                                                           |
+| `scripts/start.sh`                   | Container entrypoint — runs `prisma db push` then starts server                                                                                 |
 
 > GitHub-specific code (App client, OAuth, webhook) lives under
 > `src/integrations/github/` per the [module boundaries](#module-boundaries) —
@@ -46,6 +46,10 @@ yarn dev
 ```
 
 Use `yarn dev:db:studio` to browse the DB. Use smee.io or ngrok to receive webhooks locally.
+
+If also running the `app/` SPA locally (`yarn dev`, vite default port), set `APP_URL=http://localhost:5173`
+in `core`'s `.env` — CORS only allows the exact origin in `APP_URL`, so it must match the SPA's real
+local origin, not the production value from `.env.example`.
 
 ---
 
@@ -78,7 +82,7 @@ Fixtures live in `tests/fixtures/<framework>/`. Update detection snapshots with
 tier nightly (03:00 UTC) and on manual dispatch — keeping local `yarn test` fast
 while the slow build tier still guards against template regressions and
 base-image drift (`node:lts-slim`, `nginx:alpine`, `python:3.12-slim`).
-*(Planned: a per-push workflow running the fast tier.)*
+_(Planned: a per-push workflow running the fast tier.)_
 
 ---
 
@@ -87,19 +91,19 @@ base-image drift (`node:lts-slim`, `nginx:alpine`, `python:3.12-slim`).
 `src/detect.js` inspects an extracted repo and returns a `captain-definition`
 (the Dockerfile CapRover builds). Detection runs **top-down, first match wins** —
 order matters: any `package.json` falls through to the generic `node` template,
-so new JS-framework templates must be inserted *above* it.
+so new JS-framework templates must be inserted _above_ it.
 
-| Match | Trigger | Build target | Port |
-|-------|---------|--------------|------|
-| `dockerfile` | `Dockerfile` present | used as-is | repo's own |
-| `vite` | `vite` / `@vitejs/plugin-*` in deps | multi-stage build → nginx | 80 |
-| `nextjs` | `next` in deps | build + start | 3000 |
-| `node` | any other `package.json` | install prod deps → `node index.js` | 3000 |
-| `python` — Django | `django` in reqs or `manage.py` | `gunicorn <pkg>.wsgi` | 8000 |
-| `python` — FastAPI | `fastapi` in reqs | `uvicorn main:app` (else `app:app`) | 8000 |
-| `python` — Flask/generic | `requirements.txt` only | `python app.py` | 5000 |
-| `static` | `index.html` present | nginx serves files | 80 |
-| `unknown` | none of the above | `null` — deploy proceeds without one | — |
+| Match                    | Trigger                             | Build target                         | Port       |
+| ------------------------ | ----------------------------------- | ------------------------------------ | ---------- |
+| `dockerfile`             | `Dockerfile` present                | used as-is                           | repo's own |
+| `vite`                   | `vite` / `@vitejs/plugin-*` in deps | multi-stage build → nginx            | 80         |
+| `nextjs`                 | `next` in deps                      | build + start                        | 3000       |
+| `node`                   | any other `package.json`            | install prod deps → `node index.js`  | 3000       |
+| `python` — Django        | `django` in reqs or `manage.py`     | `gunicorn <pkg>.wsgi`                | 8000       |
+| `python` — FastAPI       | `fastapi` in reqs                   | `uvicorn main:app` (else `app:app`)  | 8000       |
+| `python` — Flask/generic | `requirements.txt` only             | `python app.py`                      | 5000       |
+| `static`                 | `index.html` present                | nginx serves files                   | 80         |
+| `unknown`                | none of the above                   | `null` — deploy proceeds without one | —          |
 
 Node templates are **package-manager-aware**: the generated Dockerfile uses
 npm / yarn / pnpm based on the committed lockfile, and falls back to
@@ -107,7 +111,7 @@ npm / yarn / pnpm based on the committed lockfile, and falls back to
 
 **Adding a template:** add a `<fw>Def(dir)` builder + detection branch in
 `detect.js`, then add a fixture under `tests/fixtures/<fw>/` — a minimal but
-*real* app whose `/` responds `hello from <fw>`. Wire it into both test tiers,
+_real_ app whose `/` responds `hello from <fw>`. Wire it into both test tiers,
 then run the build tier: if the image builds and serves, the template is proven.
 
 ### Known gaps
@@ -123,26 +127,28 @@ then run the build tier: if the image builds and serves, the template is proven.
 
 ## Environment variables
 
-| Var | Description |
-|-----|-------------|
-| `PORT` | Server port (default `3000`) |
-| `BASE_URL` | `https://github-integration.zycloud.space` |
-| `DATABASE_PROVIDER` | `sqlite` (local) or `postgres` (production) |
-| `DATABASE_URL` | SQLite: `file:./data/zycloud.db` — Postgres: full connection string |
-| `GITHUB_APP_ID` | Numeric GitHub App ID |
-| `GITHUB_APP_PRIVATE_KEY` | PEM private key with literal `\n` for newlines |
-| `GITHUB_WEBHOOK_SECRET` | Webhook secret from GitHub App settings |
-| `GITHUB_CLIENT_ID` | OAuth client ID |
-| `GITHUB_CLIENT_SECRET` | OAuth client secret |
-| `GITHUB_APP_SLUG` | App URL slug (e.g. `github-integration`) |
-| `CAPROVER_URL` | `https://captain.zycloud.space` |
-| `CAPROVER_PASSWORD` | CapRover admin password |
+| Var                      | Description                                                                                        |
+| ------------------------ | -------------------------------------------------------------------------------------------------- |
+| `PORT`                   | Server port (default `3000`)                                                                       |
+| `BASE_URL`               | `https://core.zycloud.space` — this API's own origin                                               |
+| `APP_URL`                | `https://app.zycloud.space` — the frontend SPA's origin; used for the post-login redirect and CORS |
+| `DATABASE_PROVIDER`      | `sqlite` (local) or `postgres` (production)                                                        |
+| `DATABASE_URL`           | SQLite: `file:./data/zycloud.db` — Postgres: full connection string                                |
+| `GITHUB_APP_ID`          | Numeric GitHub App ID                                                                              |
+| `GITHUB_APP_PRIVATE_KEY` | PEM private key with literal `\n` for newlines                                                     |
+| `GITHUB_WEBHOOK_SECRET`  | Webhook secret from GitHub App settings                                                            |
+| `GITHUB_CLIENT_ID`       | OAuth client ID                                                                                    |
+| `GITHUB_CLIENT_SECRET`   | OAuth client secret                                                                                |
+| `GITHUB_APP_SLUG`        | App URL slug (e.g. `github-integration`)                                                           |
+| `CAPROVER_URL`           | `https://captain.zycloud.space`                                                                    |
+| `CAPROVER_PASSWORD`      | CapRover admin password                                                                            |
 
 ---
 
 ## Deploy to zycloud
 
 **One-time CapRover setup:**
+
 1. Create app named `github-integration`
 2. Set all env vars above
 3. Add persistent volume at `/app/data` (Postgres: skip this)
@@ -173,13 +179,13 @@ This project will evolve into **core** — the central backend for the entire zy
 
 ### Module boundaries
 
-| Module | Owns |
-|--------|------|
-| `src/routes/auth.js` | Zycloud account login/logout/session |
+| Module                     | Owns                                                  |
+| -------------------------- | ----------------------------------------------------- |
+| `src/routes/auth.js`       | Zycloud account login/logout/session                  |
 | `src/integrations/github/` | GitHub App, OAuth, webhook handling — no deploy logic |
-| `src/deploy.js` | Provider-agnostic deploy pipeline |
-| `src/caprover.js` | CapRover API — no integration-specific concepts |
-| `src/routes/api/` | REST endpoints for dashboard and other frontend apps |
+| `src/deploy.js`            | Provider-agnostic deploy pipeline                     |
+| `src/caprover.js`          | CapRover API — no integration-specific concepts       |
+| `src/routes/api/`          | REST endpoints for dashboard and other frontend apps  |
 
 ---
 

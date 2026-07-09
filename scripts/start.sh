@@ -1,6 +1,6 @@
 #!/bin/sh
 
-echo "Starting github-integration..."
+echo "Starting Zycloud core..."
 echo "Syncing database schema (provider: ${DATABASE_PROVIDER})..."
 
 if [ "$DATABASE_PROVIDER" = "sqlite" ]; then

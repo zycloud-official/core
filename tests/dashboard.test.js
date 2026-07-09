@@ -21,21 +21,19 @@ async function seedAccount(data, token) {
 }
 
 describe("GET /dashboard", () => {
-  it("redirects to /auth/github with no session cookie", async () => {
+  it("returns 401 with no session cookie", async () => {
     const res = await request(app).get("/dashboard");
-    expect(res.status).toBe(302);
-    expect(res.headers.location).toContain("/auth/github");
+    expect(res.status).toBe(401);
   });
 
-  it("redirects with an unknown session token", async () => {
+  it("returns 401 with an unknown session token", async () => {
     const res = await request(app)
       .get("/dashboard")
       .set("Cookie", "session=not-a-real-token");
-    expect(res.status).toBe(302);
-    expect(res.headers.location).toContain("/auth/github");
+    expect(res.status).toBe(401);
   });
 
-  it("redirects with an expired session token", async () => {
+  it("returns 401 with an expired session token", async () => {
     await cleanDb();
     const account = await prisma.account.create({ data: { displayName: "expired" } });
     await prisma.session.create({
@@ -43,8 +41,7 @@ describe("GET /dashboard", () => {
     });
 
     const res = await request(app).get("/dashboard").set("Cookie", "session=expired-token");
-    expect(res.status).toBe(302);
-    expect(res.headers.location).toContain("/auth/github");
+    expect(res.status).toBe(401);
   });
 
   it("returns account info and an empty apps array when none deployed", async () => {

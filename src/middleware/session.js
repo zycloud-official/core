@@ -51,10 +51,10 @@ export async function loadSession(req, _res, next) {
   next();
 }
 
-// Guard for routes that require a signed-in account. Redirects to the GitHub
-// login for now (the only interactive entry point until the yangfrenz RP and a
-// dedicated SPA land).
+// Guard for routes that require a signed-in account. Responds 401 JSON —
+// callers are the SPA's fetch() calls, which can't usefully follow a redirect
+// into GitHub's OAuth flow; the SPA routes the user to login itself.
 export function requireSession(req, res, next) {
-  if (!req.account) return res.redirect("/auth/github");
+  if (!req.account) return res.status(401).json({ error: "Not authenticated" });
   next();
 }

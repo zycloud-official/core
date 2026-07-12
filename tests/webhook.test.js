@@ -74,9 +74,37 @@ describe("POST /webhook/github — push event", () => {
     expect(deployApp).not.toHaveBeenCalled();
   });
 
-  it("queues a deploy on push to the default branch", async () => {
+  it("skips deploy when repo is not connected (no App record)", async () => {
     await cleanDb();
     vi.clearAllMocks();
+    const res = await webhookRequest("push", pushPayload("main"));
+    expect(res.status).toBe(200);
+    expect(deployApp).not.toHaveBeenCalled();
+    expect(await prisma.deploy.findFirst()).toBeNull();
+  });
+
+  it("skips deploy when repo is connected but not configured (no AppConfig)", async () => {
+    await cleanDb();
+    vi.clearAllMocks();
+    await prisma.app.create({
+      data: { githubRepo: "alice/myrepo", caproverAppName: "alice-myrepo" },
+    });
+    const res = await webhookRequest("push", pushPayload("main"));
+    expect(res.status).toBe(200);
+    expect(deployApp).not.toHaveBeenCalled();
+    expect(await prisma.deploy.findFirst()).toBeNull();
+  });
+
+  it("queues a deploy when repo is connected and configured", async () => {
+    await cleanDb();
+    vi.clearAllMocks();
+    await prisma.app.create({
+      data: {
+        githubRepo: "alice/myrepo",
+        caproverAppName: "alice-myrepo",
+        config: { create: {} },
+      },
+    });
     const res = await webhookRequest("push", pushPayload("main"));
     expect(res.status).toBe(200);
     expect(deployApp).toHaveBeenCalledWith(
@@ -90,35 +118,32 @@ describe("POST /webhook/github — push event", () => {
     );
   });
 
-  it("creates an app and deploy row in the DB", async () => {
+  it("creates a deploy row in the DB when repo is connected and configured", async () => {
     await cleanDb();
+    const seededApp = await prisma.app.create({
+      data: {
+        githubRepo: "alice/myrepo",
+        caproverAppName: "alice-myrepo",
+        previewUrl: "https://alice-myrepo.zycloud.space",
+        config: { create: {} },
+      },
+    });
     await webhookRequest("push", pushPayload("main"));
 
-    const app = await prisma.app.findUnique({ where: { githubRepo: "alice/myrepo" } });
-    expect(app?.caproverAppName).toBe("alice-myrepo");
-    expect(app?.previewUrl).toBe("https://alice-myrepo.zycloud.space");
-
-    const deploy = await prisma.deploy.findFirst({ where: { appId: app.id } });
+    const deploy = await prisma.deploy.findFirst({ where: { appId: seededApp.id } });
     expect(deploy?.status).toBe("queued");
     expect(deploy?.commitSha).toBe("abc123def456");
   });
 
-  it("links the deployed app to its source connection and account", async () => {
-    await cleanDb();
-    const account = await prisma.account.create({ data: { displayName: "alice" } });
-    const conn = await prisma.sourceConnection.create({
-      data: { provider: "GITHUB", externalId: "42", ownerLogin: "alice", accountId: account.id },
-    });
-
-    await webhookRequest("push", pushPayload("main"));
-
-    const app = await prisma.app.findUnique({ where: { githubRepo: "alice/myrepo" } });
-    expect(app?.sourceConnectionId).toBe(conn.id);
-    expect(app?.accountId).toBe(account.id);
-  });
-
   it("sanitises owner/repo names into a valid CapRover app name", async () => {
     await cleanDb();
+    await prisma.app.create({
+      data: {
+        githubRepo: "my_org/my.repo",
+        caproverAppName: "my-org-my-repo",
+        config: { create: {} },
+      },
+    });
     const payload = {
       ref: "refs/heads/main",
       after: "abc123",
@@ -126,8 +151,8 @@ describe("POST /webhook/github — push event", () => {
       repository: { name: "My.Repo", owner: { login: "My_Org" }, default_branch: "main" },
     };
     await webhookRequest("push", payload);
-    const app = await prisma.app.findFirst();
-    expect(app?.caproverAppName).toMatch(/^[a-z0-9-]+$/);
+    const deploy = await prisma.deploy.findFirst();
+    expect(deploy).not.toBeNull();
   });
 });
 

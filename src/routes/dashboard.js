@@ -10,6 +10,7 @@ dashboardRoutes.get("/dashboard", loadSession, requireSession, async (req, res) 
   const apps = await prisma.app.findMany({
     where: { accountId: account.id },
     include: {
+      config: true,
       deploys: {
         orderBy: { id: "desc" },
         take: 1,
@@ -31,6 +32,7 @@ dashboardRoutes.get("/dashboard", loadSession, requireSession, async (req, res) 
       githubRepo: app.githubRepo,
       caproverAppName: app.caproverAppName,
       previewUrl: app.previewUrl,
+      configured: !!app.config,
       createdAt: app.createdAt,
       lastStatus: app.deploys[0]?.status ?? null,
       lastCommit: app.deploys[0]?.commitSha ?? null,

@@ -4,6 +4,7 @@ import cookieParser from "cookie-parser";
 import { githubOAuthRoutes } from "./integrations/github/oauth.js";
 import { githubWebhookRoutes } from "./integrations/github/webhook.js";
 import { dashboardRoutes } from "./routes/dashboard.js";
+import { githubRoutes } from "./routes/github.js";
 
 const app = express();
 
@@ -24,6 +25,7 @@ app.use(cookieParser());
 app.use(githubOAuthRoutes);
 app.use(githubWebhookRoutes);
 app.use(dashboardRoutes);
+app.use(githubRoutes);
 
 app.get("/health", (_req, res) =>
   res.json({ ok: true, ts: new Date().toISOString() })

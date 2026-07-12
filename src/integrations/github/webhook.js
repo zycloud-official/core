@@ -64,23 +64,19 @@ async function handlePush(payload) {
   const installationId = installation.id;
   console.log(`[webhook] Push to ${owner}/${repo} @ ${sha.slice(0, 7)} → app: ${appName}`);
 
-  // Associate the app with its GitHub source connection (and the account that
-  // owns it, if linked).
-  const connection = await prisma.sourceConnection.findUnique({
-    where: { provider_externalId: { provider: "GITHUB", externalId: String(installationId) } },
+  const app = await prisma.app.findUnique({
+    where: { githubRepo: `${owner}/${repo}` },
+    include: { config: true },
   });
 
-  const app = await prisma.app.upsert({
-    where: { githubRepo: `${owner}/${repo}` },
-    create: {
-      githubRepo: `${owner}/${repo}`,
-      caproverAppName: appName,
-      previewUrl: `https://${appName}.zycloud.space`,
-      ...(connection ? { sourceConnectionId: connection.id } : {}),
-      ...(connection?.accountId ? { accountId: connection.accountId } : {}),
-    },
-    update: {},
-  });
+  if (!app) {
+    console.log(`[webhook] Deploy skipped — ${owner}/${repo} not connected`);
+    return;
+  }
+  if (!app.config) {
+    console.log(`[webhook] Deploy skipped — ${owner}/${repo} not configured`);
+    return;
+  }
 
   const deploy = await prisma.deploy.create({
     data: { appId: app.id, commitSha: sha, status: "queued" },

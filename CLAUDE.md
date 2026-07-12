@@ -1,8 +1,10 @@
-# github-integration
+# core
 
-A Netlify-style deployment platform for yangfrenz.club members, powered by a GitHub App and CapRover. Members connect their GitHub repos, and every push to the default branch automatically builds and deploys their app — no CLI, no credentials to manage.
+**core** is the central backend for the entire zycloud PaaS stack — the auth authority, data layer, and deployment orchestrator that separate frontends and integrations build on. Its first and current capability is Netlify-style GitHub deploys, but the codebase is deliberately structured so that identity, deployment, and source-provider concerns stay decoupled as the platform grows (see [Architecture Vision](#architecture-vision)).
 
-Deployed at `core.zycloud.space` on the **zycloud** CapRover instance. A separate frontend SPA project is deployed at `app.zycloud.space` and consumes this API. Member apps are served at `https://{owner}-{repo}.zycloud.space`.
+Today that means: members connect their GitHub repos, and every push to the default branch automatically builds and deploys their app via a GitHub App + CapRover — no CLI, no credentials to manage.
+
+Deployed at `core.zycloud.space` on the **zycloud** CapRover instance. The separate frontend SPA (`app/`, its own git repo in this monorepo) is deployed at `app.zycloud.space` and consumes this API over a cookie session — see the root `../CLAUDE.md` for the cross-project contract. Member apps are served at `https://{owner}-{repo}.zycloud.space`.
 
 **Package manager: yarn** — use `yarn` for all installs and script runs. Do not use `npm` or `npx`; use `yarn` equivalents instead.
 

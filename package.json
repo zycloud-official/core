@@ -10,12 +10,12 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "test:coverage": "vitest run --coverage",
-    "dev:db:generate": "prisma generate --schema=prisma/schema.dev.prisma",
-    "dev:db:push": "prisma db push --schema=prisma/schema.dev.prisma",
-    "dev:db:studio": "prisma studio --schema=prisma/schema.dev.prisma",
     "db:generate": "prisma generate",
     "db:push": "prisma db push",
-    "db:studio": "prisma studio"
+    "db:studio": "prisma studio",
+    "test:db:generate": "prisma generate --schema=prisma/schema.test.prisma",
+    "test:db:push": "prisma db push --schema=prisma/schema.test.prisma",
+    "test:db:studio": "prisma studio --schema=prisma/schema.test.prisma"
   },
   "license": "MIT",
   "author": "Yang Lin",

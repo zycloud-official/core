@@ -1,10 +1,19 @@
-// Development schema — SQLite
-// Used locally via: yarn dev:db:push
-// For production (PostgreSQL), use prisma/schema.prisma
-// NOTE: keep this file in lockstep with schema.prisma (only the datasource differs).
+// Test schema — SQLite
+// Used ONLY by the test suite (see tests/global-setup.js). Dev and prod both use
+// PostgreSQL via schema.prisma; tests use SQLite for a fast, server-less DB.
+//
+// This generates its client to a SEPARATE output path (see the generator block)
+// so running `yarn test` never overwrites the PostgreSQL client that dev/prod
+// use at node_modules/@prisma/client.
+//
+// NOTE: keep the models below in lockstep with schema.prisma — only the
+// datasource and the generator `output` differ. (Prisma requires a static
+// provider per schema, so two engines means two schema files; there's no
+// supported single-schema way to vary the provider.)
 
 generator client {
   provider = "prisma-client-js"
+  output   = "./generated/test-client"
 }
 
 datasource db {

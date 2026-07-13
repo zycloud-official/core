@@ -1,13 +1,9 @@
 #!/bin/sh
 
 echo "Starting Zycloud core..."
-echo "Syncing database schema (provider: ${DATABASE_PROVIDER})..."
+echo "Syncing database schema (PostgreSQL)..."
 
-if [ "$DATABASE_PROVIDER" = "sqlite" ]; then
-  yarn prisma db push --schema=prisma/schema.dev.prisma
-else
-  yarn prisma db push
-fi
+yarn prisma db push
 
 echo "Starting server..."
 node src/index.js

@@ -25,8 +25,8 @@ Deployed at `core.zycloud.space` on the **zycloud** CapRover instance. The separ
 | `src/integrations/github/oauth.js`   | GitHub login: `GET /auth/github`, `/callback/github`, `POST /auth/logout` — resolves the account behind a GITHUB identity (`githubOAuthRoutes`) |
 | `src/integrations/github/webhook.js` | `POST /webhook/github` — HMAC verify + event handlers; installs become GitHub `SourceConnection`s (`githubWebhookRoutes`)                       |
 | `src/routes/dashboard.js`            | `GET /dashboard` — the account + its apps and deploy status                                                                                     |
-| `prisma/schema.prisma`               | Production schema (PostgreSQL)                                                                                                                  |
-| `prisma/schema.dev.prisma`           | Development schema (SQLite)                                                                                                                     |
+| `prisma/schema.prisma`               | Dev + production schema (PostgreSQL) — the default `@prisma/client`                                                                             |
+| `prisma/schema.test.prisma`          | Test-only schema (SQLite); generates a separate client to `prisma/generated/test-client` so `yarn test` never clobbers the PostgreSQL client   |
 | `tests/fixtures/`                    | Per-framework sample apps for detection + build tests                                                                                           |
 | `scripts/start.sh`                   | Container entrypoint — runs `prisma db push` then starts server                                                                                 |
 
@@ -39,15 +39,24 @@ Deployed at `core.zycloud.space` on the **zycloud** CapRover instance. The separ
 
 ## Local dev
 
+Dev runs on PostgreSQL (same engine as prod). Create a local database (e.g.
+`createdb zycloud_dev`) and point `DATABASE_URL` at it, then:
+
 ```bash
-cp .env.example .env
+cp .env.example .env    # set DATABASE_URL to your local Postgres
 yarn install
-yarn dev:db:generate   # generate Prisma client from SQLite schema
-yarn dev:db:push       # create/sync local DB
+yarn db:generate        # generate the Prisma client (PostgreSQL)
+yarn db:push            # create/sync local DB
 yarn dev
 ```
 
-Use `yarn dev:db:studio` to browse the DB. Use smee.io or ngrok to receive webhooks locally.
+Use `yarn db:studio` to browse the DB. Use smee.io or ngrok to receive webhooks locally.
+
+> **Tests use SQLite, not your dev DB.** `vitest.config.js` sets
+> `DATABASE_PROVIDER=sqlite` + a `file:` URL, and `tests/global-setup.js` pushes
+> `schema.test.prisma`, whose client is generated to a separate path. So
+> `yarn test` is self-contained and never touches your Postgres dev DB or its
+> client — no need to run any `db:*` script before testing.
 
 If also running the `app/` SPA locally (`yarn dev`, vite default port), set `APP_URL=http://localhost:5173`
 in `core`'s `.env` — CORS only allows the exact origin in `APP_URL`, so it must match the SPA's real
@@ -134,8 +143,8 @@ then run the build tier: if the image builds and serves, the template is proven.
 | `PORT`                   | Server port (default `3000`)                                                                       |
 | `BASE_URL`               | `https://core.zycloud.space` — this API's own origin                                               |
 | `APP_URL`                | `https://app.zycloud.space` — the frontend SPA's origin; used for the post-login redirect and CORS |
-| `DATABASE_PROVIDER`      | `sqlite` (local) or `postgres` (production)                                                        |
-| `DATABASE_URL`           | SQLite: `file:./data/zycloud.db` — Postgres: full connection string                                |
+| `DATABASE_PROVIDER`      | `postgresql` for dev + prod. (Tests set `sqlite` themselves via vitest.config.js.)                 |
+| `DATABASE_URL`           | PostgreSQL connection string (dev: local Postgres; prod: managed Postgres)                         |
 | `GITHUB_APP_ID`          | Numeric GitHub App ID                                                                              |
 | `GITHUB_APP_PRIVATE_KEY` | PEM private key with literal `\n` for newlines                                                     |
 | `GITHUB_WEBHOOK_SECRET`  | Webhook secret from GitHub App settings                                                            |

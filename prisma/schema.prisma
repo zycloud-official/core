@@ -1,6 +1,7 @@
-// Production schema — PostgreSQL
-// For local development, use prisma/schema.dev.prisma (SQLite)
-// NOTE: keep this file in lockstep with schema.dev.prisma (only the datasource differs).
+// Dev + production schema — PostgreSQL (dev and prod use the same engine).
+// The test suite uses prisma/schema.test.prisma (SQLite) instead.
+// NOTE: keep the models here in lockstep with schema.test.prisma — only the
+// datasource and the generator `output` differ.
 
 generator client {
   provider = "prisma-client-js"

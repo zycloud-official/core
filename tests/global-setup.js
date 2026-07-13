@@ -17,7 +17,10 @@ export async function setup() {
     await rm(`${base}-wal`, { force: true });
   }
 
-  execSync("yarn prisma db push --schema=prisma/schema.dev.prisma", {
+  // Push the SQLite test schema and (implicitly) generate its client into the
+  // schema's own output path — this does NOT touch the PostgreSQL @prisma/client
+  // that dev/prod use.
+  execSync("yarn prisma db push --schema=prisma/schema.test.prisma", {
     env: { ...process.env, DATABASE_URL: "file:./data/test.db" },
     stdio: "inherit",
   });

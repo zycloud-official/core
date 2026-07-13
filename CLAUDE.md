@@ -52,6 +52,17 @@ yarn dev
 
 Use `yarn db:studio` to browse the DB. Use smee.io or ngrok to receive webhooks locally.
 
+> **There is only one Webhook URL per GitHub App.** The `zycloud-app` GitHub App (prod) has its
+> Webhook URL (and Authorization callback URL) pointed at `core.zycloud.space`. Repointing it at a
+> local ngrok/smee tunnel to receive webhooks locally means **prod stops receiving `installation`/
+> `push` webhooks** for as long as it's repointed — there's no way to have both without one of:
+> 1. **Temporarily repoint the prod App's Webhook URL** to your tunnel, test, then switch it back.
+> 2. **Register a separate dev-only GitHub App** (its own `GITHUB_APP_ID` / private key / webhook
+>    secret / client id+secret), with its Webhook URL pointed at your local tunnel from the start.
+>    Put its credentials in your local `.env` instead of the prod ones. Install it on a scratch repo
+>    you don't mind granting a throwaway App access to. This is the safer default — it never touches
+>    prod config, so use it unless you have a specific reason to test against the real App.
+
 > **Tests use SQLite, not your dev DB.** `vitest.config.js` sets
 > `DATABASE_PROVIDER=sqlite` + a `file:` URL, and `tests/global-setup.js` pushes
 > `schema.test.prisma`, whose client is generated to a separate path. So

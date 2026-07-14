@@ -1,18 +1,54 @@
 import { Router } from "express";
 import { prisma } from "../db.js";
-import { githubApp } from "../integrations/github/client.js";
+import {
+  listUserInstallations,
+  listUserInstallationRepos,
+} from "../integrations/github/client.js";
 import { loadSession, requireSession } from "../middleware/session.js";
 
 export const githubRoutes = Router();
 
+// Lists every repo the member can deploy, discovered LIVE from GitHub via their
+// stored OAuth token — not from webhook-populated SourceConnection rows (those
+// never arrive on a local dev server). Each repo is flagged `connected` if it
+// already has a zycloud app.
 githubRoutes.get("/github/repos", loadSession, requireSession, async (req, res) => {
-  const connections = await prisma.sourceConnection.findMany({
+  const identity = await prisma.authIdentity.findFirst({
     where: { accountId: req.account.id, provider: "GITHUB" },
   });
-
-  if (connections.length === 0) {
-    return res.json([]);
+  if (!identity?.accessToken) {
+    return res.status(400).json({ error: "GitHub account not linked" });
   }
+
+  let installations;
+  try {
+    installations = await listUserInstallations(identity.accessToken);
+  } catch (err) {
+    if (err.status === 401) {
+      return res.status(401).json({ error: "GitHub session expired — sign in again" });
+    }
+    throw err;
+  }
+
+  // Mirror the live installations into SourceConnection rows so POST /apps can
+  // validate ownership. The user token already proved access, so it's safe to
+  // (re)claim each installation for this account.
+  await Promise.all(
+    installations.map((inst) =>
+      prisma.sourceConnection.upsert({
+        where: {
+          provider_externalId: { provider: "GITHUB", externalId: String(inst.id) },
+        },
+        create: {
+          provider: "GITHUB",
+          externalId: String(inst.id),
+          ownerLogin: (inst.account?.login ?? "").toLowerCase(),
+          accountId: req.account.id,
+        },
+        update: { accountId: req.account.id },
+      })
+    )
+  );
 
   const connectedRepos = await prisma.app.findMany({
     where: { accountId: req.account.id },
@@ -21,18 +57,14 @@ githubRoutes.get("/github/repos", loadSession, requireSession, async (req, res) 
   const connectedSet = new Set(connectedRepos.map((a) => a.githubRepo));
 
   const results = [];
-
   await Promise.all(
-    connections.map(async (conn) => {
-      const octokit = await githubApp.getInstallationOctokit(Number(conn.externalId));
-      const { data } = await octokit.request("GET /installation/repositories", {
-        per_page: 100,
-      });
-      for (const repo of data.repositories) {
+    installations.map(async (inst) => {
+      const repos = await listUserInstallationRepos(inst.id, identity.accessToken);
+      for (const repo of repos) {
         const githubRepo = repo.full_name.toLowerCase();
         results.push({
           githubRepo,
-          installationId: Number(conn.externalId),
+          installationId: inst.id,
           defaultBranch: repo.default_branch,
           private: repo.private,
           connected: connectedSet.has(githubRepo),

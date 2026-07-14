@@ -50,6 +50,9 @@ model AuthIdentity {
   provider         String
   providerSubject  String   @map("provider_subject")
   providerUsername String?  @map("provider_username")
+  // User-to-server OAuth token for this provider, scoped to the owning account.
+  // Used to query the provider live (e.g. list GitHub App installations/repos).
+  accessToken      String?  @map("access_token")
   createdAt        DateTime @default(now()) @map("created_at")
   account          Account  @relation(fields: [accountId], references: [id], onDelete: Cascade)
 

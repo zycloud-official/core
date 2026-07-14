@@ -63,7 +63,7 @@ githubOAuthRoutes.get("/callback/github", async (req, res) => {
     });
     await prisma.authIdentity.update({
       where: { id: identity.id },
-      data: { providerUsername: username },
+      data: { providerUsername: username, accessToken: authentication.token },
     });
   } else {
     account = await prisma.account.create({
@@ -75,6 +75,7 @@ githubOAuthRoutes.get("/callback/github", async (req, res) => {
             provider: "GITHUB",
             providerSubject: subject,
             providerUsername: username,
+            accessToken: authentication.token,
           },
         },
       },

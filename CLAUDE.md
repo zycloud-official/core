@@ -73,6 +73,20 @@ If also running the `app/` SPA locally (`yarn dev`, vite default port), set `APP
 in `core`'s `.env` — CORS only allows the exact origin in `APP_URL`, so it must match the SPA's real
 local origin, not the production value from `.env.example`.
 
+### Schema changes — no migration files (yet)
+
+There's no `prisma/migrations/` directory and no `prisma migrate` workflow — `db:push` (`yarn
+db:push` locally, `scripts/start.sh` on every container boot in prod) is the only mechanism, in both
+dev and prod. **The system isn't carrying real production data yet**, so prefer editing
+`schema.prisma`/`schema.test.prisma` directly (add/rename/remove fields and models freely) over
+preserving migration history — no need for `prisma migrate dev` or hand-written SQL at this phase.
+
+**Exception:** flag it explicitly (don't just push silently) whenever a schema change could be
+destructive against the *already-deployed* prod DB on the next `db push` — e.g. a required column
+with no default added to a table that already has rows, a dropped/renamed column, or a narrowed
+type. Those may need a manual fix (backfill, temporary default, one-off SQL) timed around that
+deploy, so call them out before merging rather than after something breaks.
+
 ---
 
 ## Testing
@@ -144,6 +158,174 @@ then run the build tier: if the image builds and serves, the template is proven.
   `requirements.txt` are currently classified `unknown`.
 - **Long tail of JS frameworks** (SvelteKit, Astro, Nuxt, Remix, CRA, Angular)
   falls through to the generic `node` template and will mostly fail to build.
+- **Detection is a guess, not a member choice** — planned fix: build-pack presets
+  (see [App Configuration](#app-configuration-planned) below) turn `detectFramework`
+  into an advisory suggestion only; the deploy pipeline uses the member's explicit
+  pick instead of guessing.
+
+---
+
+## App Configuration (planned)
+
+Every connected app currently deploys on a guess: `detect.js` inspects the repo and
+picks a framework template, the CapRover app name is derived from `{owner}-{repo}`,
+env vars are never sent to CapRover at all, and the webhook only ever deploys pushes
+to the repo's default branch. `AppConfig` (schema) exists today as an empty stub —
+just `id`/`appId`/timestamps — auto-created on connect (`config: { create: {} }` in
+`github.js`), which means the webhook's `!app.config` gate is currently a no-op.
+
+Fields to add, in priority order. `buildPack`/`targetBranch`/`codename` are required
+scalar columns on `AppConfig` — the connect form can't submit without them. Env vars
+are **optional**: they live in their own `EnvVar` table related to `AppConfig`, so
+zero rows is a valid, common state (e.g. a static site needs none) — no NOT NULL/
+required handling needed for that, unlike the other three.
+
+- **`buildPack`** (String, required, no default) — replaces guess-based detection
+  with an explicit member choice from a fixed preset list (`dockerfile`, `vite`,
+  `nextjs`, `node`, `python-django`, `python-fastapi`, `python-flask`, `static`).
+  **v1 has no auto-suggestion** — the connect form just lists all presets and the
+  member picks one; `detect.js`'s guessing is not wired into the picker yet (that
+  would need a new endpoint to fetch repo contents before the form even opens —
+  deferred, see Known issues). `deploy.js` stops calling `detectFramework` to
+  decide the template and instead looks up the chosen buildpack's `captainDef(dir)`
+  builder directly. A repo's own `captain-definition`, if present, still wins over
+  any buildpack (unchanged from today).
+- **`targetBranch`** (String, required — pre-filled with the repo's `default_branch`
+  at connect time, but overridable) — `webhook.js`'s `handlePush` currently
+  hardcodes `ref !== refs/heads/${repository.default_branch}`; this needs to check
+  `app.config.targetBranch` instead, which means looking up `app` + `config`
+  *before* the branch check, not after (today the app lookup happens later, purely
+  to decide whether to deploy at all).
+- **`codename`** (String, unique, required) — replaces the `{owner}-{repo}`
+  derivation for both `caproverAppName` and `previewUrl` (becomes
+  `https://{codename}.zycloud.space`). Needs a slug validator (CapRover app-name
+  rules: lowercase, alphanumeric + hyphen) plus a reserved-word check (see Known
+  issues) and a **global** uniqueness check (not just per-account) run before
+  saving — surfaced as a live availability check in the connect UI, but the DB
+  unique constraint is the real guard (the API must handle a unique-violation on
+  write as a 409, since the UI's live check can't close the race with a
+  same-instant duplicate submission).
+  **Renaming after first deploy:** decided to support it via CapRover's own
+  `POST /api/v2/user/apps/appDefinitions/rename` (`{oldAppName, newAppName}`),
+  traced through CapRover's current source
+  (`ServiceManager.renameApp` / `AppsDataStore.renameApp`) rather than assumed from
+  docs (this endpoint isn't in CapRover's public API docs at all). It: requires the
+  old app's Docker service to currently be running (throws otherwise) → removes
+  that service → renames the stored app definition → recreates the service under
+  the new name → re-enables SSL if it was on. Concretely: **brief downtime is
+  guaranteed** (steps are sequential, not atomic) and **there's no rollback** if a
+  later step fails after the old service has already been removed. Our side must:
+  only allow renaming while the app's service is actually running, and only update
+  our own `codename` column *after* CapRover's rename call succeeds — never assume
+  success. (Two old CapRover GitHub issues, #490/#701, reported renames deleting
+  apps outright; both are 2019–2021, closed as stale/unreproducible, and current
+  source looks materially more careful — but there's no changelog confirming a fix,
+  so treat this as a real, if unlikely, failure mode.)
+- **Env vars** (optional — zero is valid) — a separate `EnvVar` model (`key`,
+  `value`, `secret: Boolean`, `keyVersion: Int @default(1)`, `appConfigId`) rather
+  than a JSON blob on `AppConfig`. `value` is **encrypted at rest**, not plaintext
+  — see [Env var secret encryption](#env-var-secret-encryption-planned) below.
+  `caprover.js` needs a new call (or an extended `enableSsl`-style `update`) that
+  sends `envVars: [{key, value}]` (decrypted just-in-time) on every deploy — an
+  empty array is fine and just means no env vars are set.
+
+### Pipeline changes this implies
+
+- `github.js`'s `POST /apps` stays a **single endpoint**, but its request body
+  grows to carry `buildPack`/`targetBranch`/`codename`/env vars, and it creates
+  `App` + a fully-populated `AppConfig` (+ `EnvVar` rows) together in one
+  request/transaction — no separate "configure" endpoint or follow-up call.
+  `AppConfig` is only ever created with these fields present (never empty), which
+  makes the webhook's `!app.config` gate meaningful instead of a no-op.
+- `deploy.js`: drop the `detectFramework` call in favor of
+  `buildPacks[app.config.buildPack]`; use `app.config.codename` instead of the
+  owner/repo-derived `appName` for CapRover create/upload/SSL calls; derive
+  `containerHttpPort` from the buildpack instead of the hardcoded `80` (see Known
+  issues); send decrypted env vars alongside the tarball upload.
+- `detect.js`: reshape from "guess and return a template" into a keyed
+  `buildPacks` registry — for v1 this registry is consumed directly by
+  `deploy.js`'s explicit lookup only; the guess/suggestion path is not wired up.
+  This changes `detectFramework`'s exported shape, which will break the existing
+  detection snapshot tests (`tests/detect*.test.js`) — not a drop-in refactor,
+  budget time to update those fixtures/snapshots alongside it.
+- `ConnectRepoModal.tsx` / dashboard (`app/`): the **UI** changes, not the API
+  shape — clicking "Connect" on a repo opens a form (buildpack picker listing all
+  presets, codename field with availability check, branch dropdown, env var
+  key/value list editor) instead of firing `connectRepo` immediately; submitting
+  the form is still the one `POST /apps` call.
+
+**Status:** planned, not started. Tracked in the Roadmap below.
+
+### Env var secret encryption (planned)
+
+`EnvVar.value` must not be plaintext in Postgres — it will hold DB URLs and API
+keys. Plan, designed so a future key rotation is a data migration rather than a
+schema/API redesign:
+
+1. **Key**: one 32-byte symmetric key (`openssl rand -base64 32`), stored as a new
+   env var (`ENV_VAR_ENCRYPTION_KEY`) — provisioned the same way
+   `GITHUB_APP_PRIVATE_KEY`/`CAPROVER_PASSWORD` already are (CapRover App Config in
+   prod, `.env` locally). Never committed.
+2. **Algorithm**: AES-256-GCM via Node's built-in `crypto` — no new dependency,
+   and it's authenticated (detects tampering, not just confidentiality). Each value
+   gets its own random IV.
+3. **Schema**: `EnvVar.value` stores an opaque blob (`iv:authTag:ciphertext`, all
+   base64) instead of plaintext, plus `keyVersion Int @default(1)` *from day one*
+   — that's what makes rotation later additive instead of a schema change under
+   pressure.
+4. **One choke point**: a single `src/crypto/secrets.js` exporting
+   `encryptSecret`/`decryptSecret`. Nothing else touches `crypto` directly.
+5. **Where it happens**: encrypt right before the Prisma write in `POST /apps`
+   (plaintext never touches the DB); decrypt only inside `deploy.js`, right before
+   building CapRover's `envVars` payload — decrypted values never leave that
+   request.
+6. **API rule**: any `GET` of `AppConfig`/`EnvVar` redacts `secret: true` rows
+   (`value: null`) — write-only, same UX as GitHub Actions secrets. Non-secret rows
+   (e.g. `NODE_ENV=production`) return normally.
+7. **Threat model, stated explicitly**: defends against DB dumps/backups or a
+   SQL-injection-style read landing on plaintext credentials. Does **not** defend
+   against the `core` process itself being compromised (whoever can read
+   `process.env.ENV_VAR_ENCRYPTION_KEY` can decrypt everything) — that's the
+   standard ceiling for app-level envelope encryption without a separate KMS/HSM,
+   and it's proportionate at this project's scale.
+8. **Rotation** (documented now, not built for v1): add
+   `ENV_VAR_ENCRYPTION_KEY_V2` alongside the old key; write path always encrypts
+   with the latest version; a one-off script decrypts `keyVersion: 1` rows and
+   re-encrypts them as `v2`; retire the v1 key once migrated. No schema migration
+   needed at rotation time — that's the point of `keyVersion` existing from day one.
+
+### Known issues / open risks
+
+Caught while reading the existing pipeline; noted here rather than fixed silently
+as a side effect of this feature, since some predate it:
+
+- **`containerHttpPort` is hardcoded to `80`** in `caprover.js`'s `enableSsl`, for
+  every app regardless of framework. Fine for the `vite`/`static` templates
+  (nginx really listens on 80), but Next.js (3000) and the Python templates
+  (8000/5000) would get CapRover routing to the wrong internal port — deploys
+  likely "succeed" while the app stays unreachable. Fix: derive
+  `containerHttpPort` from `buildPack` once that field lands.
+- **A bare `Dockerfile` with no committed `captain-definition` currently deploys
+  with neither.** `detect.js` returns `captainDef: null` for the `dockerfile`
+  case ("use as-is"), but `deploy.js` only writes a `captain-definition` when
+  `captainDef` is truthy — nothing gets injected, and CapRover generally needs
+  that file to know to build from the Dockerfile. The `dockerfile` buildpack
+  preset should emit `{"schemaVersion":1,"dockerfilePath":"./Dockerfile"}`
+  itself rather than inheriting this gap.
+- **`codename`'s model home is undecided** — drafted above as an `AppConfig`
+  field, but it's arguably identity (it replaces `App.caproverAppName`/
+  `previewUrl`), not deploy *behavior*, which is what the rest of `AppConfig`
+  covers. Decide before writing the migration.
+- **This plan only covers creation, not editing.** Env vars especially will need
+  rotation/updates later (codename already has a rename path above, but
+  `buildPack`/`targetBranch`/env vars have no `PATCH` endpoint or edit UI in
+  scope yet — connect-time only).
+- **Codename slugs need a reserved-word list** — `www`, `api`, `app`, `core`,
+  `captain`, etc. must be blocked so a member can't claim a subdomain that
+  collides with zycloud's own infra.
+- **Buildpack auto-suggestion needs plumbing that doesn't exist** — deferred for
+  v1 (see `buildPack` above), but noting it stays open: today's `GET
+  /github/repos` only returns GitHub metadata, never repo contents.
 
 ---
 
@@ -220,6 +402,16 @@ This project will evolve into **core** — the central backend for the entire zy
 - [x] Python framework detection — Django & FastAPI, not just Flask
 - [x] Two-tier test setup: detection snapshots + opt-in Docker build tier
 - [x] Nightly CI running the Docker build tier
+
+**Next up — App Configuration** (see [App Configuration](#app-configuration-planned) above)
+
+- [ ] `AppConfig.buildPack` — build-pack presets, replacing guess-based detection; v1 lists all presets, no auto-suggestion
+- [ ] `AppConfig.targetBranch` — configurable deploy branch (currently hardcoded to default branch)
+- [ ] `AppConfig.codename` — member-chosen subdomain prefix, replacing `{owner}-{repo}`; global availability check before save; rename supported later via CapRover's `appDefinitions/rename`
+- [ ] `EnvVar` model (optional — zero is valid), **encrypted at rest** (see [Env var secret encryption](#env-var-secret-encryption-planned)) + wiring env vars into the CapRover upload/update calls
+- [ ] Connect UI shows a form (buildpack/branch/codename/env vars) before submitting; `POST /apps` stays one endpoint, one request
+- [ ] Fix `containerHttpPort` hardcoded to `80` — derive from `buildPack` (known bug, see Known issues)
+- [ ] Fix bare-`Dockerfile`-with-no-`captain-definition` deploying with neither (known gap, see Known issues)
 
 **Near-term (templates & quality)**
 

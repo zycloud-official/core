@@ -13,6 +13,7 @@ export default defineConfig({
       APP_URL: "https://app.example.com",
       CAPROVER_URL: "https://captain.example.com",
       CAPROVER_PASSWORD: "test-password",
+      ENV_VAR_ENCRYPTION_KEY: "cWlOgZJt4apdu5r3ylfAzTYeVX0N5I9D0MBXHPeq56o=",
     },
     globalSetup: "./tests/global-setup.js",
     setupFiles: ["./tests/setup.js"],

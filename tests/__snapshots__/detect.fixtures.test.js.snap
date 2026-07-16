@@ -1,6 +1,11 @@
 // Vitest Snapshot v1, https://vitest.dev/guide/snapshot.html
 
-exports[`detectFramework against real fixtures > detects dockerfile for fixtures/dockerfile 1`] = `null`;
+exports[`detectFramework against real fixtures > detects dockerfile for fixtures/dockerfile 1`] = `
+{
+  "dockerfilePath": "./Dockerfile",
+  "schemaVersion": 1,
+}
+`;
 
 exports[`detectFramework against real fixtures > detects nextjs for fixtures/nextjs 1`] = `
 {
@@ -33,22 +38,7 @@ exports[`detectFramework against real fixtures > detects node for fixtures/node 
 }
 `;
 
-exports[`detectFramework against real fixtures > detects python for fixtures/python 1`] = `
-{
-  "dockerfileLines": [
-    "FROM python:3.12-slim",
-    "WORKDIR /app",
-    "COPY requirements.txt ./",
-    "RUN pip install --no-cache-dir -r requirements.txt",
-    "COPY . .",
-    "EXPOSE 5000",
-    "CMD ["python", "app.py"]",
-  ],
-  "schemaVersion": 2,
-}
-`;
-
-exports[`detectFramework against real fixtures > detects python for fixtures/python-django 1`] = `
+exports[`detectFramework against real fixtures > detects python-django for fixtures/python-django 1`] = `
 {
   "dockerfileLines": [
     "FROM python:3.12-slim",
@@ -63,7 +53,7 @@ exports[`detectFramework against real fixtures > detects python for fixtures/pyt
 }
 `;
 
-exports[`detectFramework against real fixtures > detects python for fixtures/python-fastapi 1`] = `
+exports[`detectFramework against real fixtures > detects python-fastapi for fixtures/python-fastapi 1`] = `
 {
   "dockerfileLines": [
     "FROM python:3.12-slim",
@@ -73,6 +63,21 @@ exports[`detectFramework against real fixtures > detects python for fixtures/pyt
     "COPY . .",
     "EXPOSE 8000",
     "CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8000"]",
+  ],
+  "schemaVersion": 2,
+}
+`;
+
+exports[`detectFramework against real fixtures > detects python-flask for fixtures/python 1`] = `
+{
+  "dockerfileLines": [
+    "FROM python:3.12-slim",
+    "WORKDIR /app",
+    "COPY requirements.txt ./",
+    "RUN pip install --no-cache-dir -r requirements.txt",
+    "COPY . .",
+    "EXPOSE 5000",
+    "CMD ["python", "app.py"]",
   ],
   "schemaVersion": 2,
 }

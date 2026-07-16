@@ -95,7 +95,7 @@ model App {
   accountId          Int?              @map("account_id")
   sourceConnectionId Int?              @map("source_connection_id")
   githubRepo         String            @unique @map("github_repo")
-  caproverAppName    String            @map("caprover_app_name")
+  caproverAppName    String            @unique @map("caprover_app_name")
   previewUrl         String?           @map("preview_url")
   createdAt          DateTime          @default(now()) @map("created_at")
   account            Account?          @relation(fields: [accountId], references: [id])
@@ -107,13 +107,34 @@ model App {
 }
 
 model AppConfig {
-  id        Int      @id @default(autoincrement())
-  appId     Int      @unique @map("app_id")
-  createdAt DateTime @default(now()) @map("created_at")
-  updatedAt DateTime @updatedAt @map("updated_at")
-  app       App      @relation(fields: [appId], references: [id], onDelete: Cascade)
+  id           Int      @id @default(autoincrement())
+  appId        Int      @unique @map("app_id")
+  buildPack    String   @map("build_pack")
+  targetBranch String   @map("target_branch")
+  createdAt    DateTime @default(now()) @map("created_at")
+  updatedAt    DateTime @updatedAt @map("updated_at")
+  app          App      @relation(fields: [appId], references: [id], onDelete: Cascade)
+  envVars      EnvVar[]
 
   @@map("app_configs")
+}
+
+// Env vars for an app's deploy. `value` is an encrypted blob (see
+// src/crypto/secrets.js), never plaintext — decrypted just-in-time in
+// deploy.js right before it's sent to CapRover. `secret` rows are redacted
+// on any GET. `keyVersion` exists from day one so a future key rotation is a
+// data migration, not a schema change.
+model EnvVar {
+  id          Int       @id @default(autoincrement())
+  appConfigId Int       @map("app_config_id")
+  key         String
+  value       String
+  secret      Boolean   @default(false)
+  keyVersion  Int       @default(1) @map("key_version")
+  createdAt   DateTime  @default(now()) @map("created_at")
+  appConfig   AppConfig @relation(fields: [appConfigId], references: [id], onDelete: Cascade)
+
+  @@map("env_vars")
 }
 
 model Deploy {

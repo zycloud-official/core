@@ -11,10 +11,26 @@ vi.mock("../src/integrations/github/client.js", () => ({
   downloadTarball: vi.fn(),
 }));
 
+// Mock the name generator so a specific test can force a collision-then-retry;
+// other tests just get real-looking distinct names via the actual shape.
+let nameCounter = 0;
+vi.mock("../src/appName.js", () => ({
+  generateAppName: vi.fn(() => `generated-name-${++nameCounter}`),
+}));
+
 const { default: app } = await import("../src/app.js");
 const { listUserInstallations, listUserInstallationRepos } = await import(
   "../src/integrations/github/client.js"
 );
+const { generateAppName } = await import("../src/appName.js");
+
+const validAppBody = (overrides = {}) => ({
+  githubRepo: "alice/myrepo",
+  installationId: 42,
+  buildPack: "static",
+  targetBranch: "main",
+  ...overrides,
+});
 
 // Seeds an account with a GITHUB identity carrying an OAuth token (the token is
 // what /github/repos uses to discover installations).
@@ -70,7 +86,7 @@ describe("GET /github/repos", () => {
         githubRepo: "bob/connected-repo",
         caproverAppName: "bob-connected-repo",
         accountId: account.id,
-        config: { create: {} },
+        config: { create: { buildPack: "static", targetBranch: "main" } },
       },
     });
 
@@ -125,9 +141,7 @@ describe("POST /apps", () => {
   beforeEach(cleanDb);
 
   it("returns 401 with no session", async () => {
-    const res = await request(app)
-      .post("/apps")
-      .send({ githubRepo: "alice/myrepo", installationId: 1 });
+    const res = await request(app).post("/apps").send(validAppBody());
     expect(res.status).toBe(401);
   });
 
@@ -140,12 +154,21 @@ describe("POST /apps", () => {
     expect(res.status).toBe(400);
   });
 
+  it("returns 400 for an unknown buildPack", async () => {
+    await seedAccount({ displayName: "alice" }, "alice-token");
+    const res = await request(app)
+      .post("/apps")
+      .set("Cookie", "session=alice-token")
+      .send(validAppBody({ buildPack: "cobol" }));
+    expect(res.status).toBe(400);
+  });
+
   it("returns 400 for malformed githubRepo", async () => {
     await seedAccount({ displayName: "alice" }, "alice-token");
     const res = await request(app)
       .post("/apps")
       .set("Cookie", "session=alice-token")
-      .send({ githubRepo: "not-a-valid-repo", installationId: 42 });
+      .send(validAppBody({ githubRepo: "not-a-valid-repo" }));
     expect(res.status).toBe(400);
   });
 
@@ -154,11 +177,11 @@ describe("POST /apps", () => {
     const res = await request(app)
       .post("/apps")
       .set("Cookie", "session=alice-token")
-      .send({ githubRepo: "alice/myrepo", installationId: 999 });
+      .send(validAppBody({ installationId: 999 }));
     expect(res.status).toBe(403);
   });
 
-  it("creates App and AppConfig and returns 201", async () => {
+  it("creates App and AppConfig and returns 201 with a generated app name", async () => {
     const account = await seedAccount({ displayName: "alice" }, "alice-token");
     await prisma.sourceConnection.create({
       data: { provider: "GITHUB", externalId: "42", ownerLogin: "alice", accountId: account.id },
@@ -167,20 +190,49 @@ describe("POST /apps", () => {
     const res = await request(app)
       .post("/apps")
       .set("Cookie", "session=alice-token")
-      .send({ githubRepo: "alice/myrepo", installationId: 42 });
+      .send(validAppBody());
 
     expect(res.status).toBe(201);
     expect(res.body.githubRepo).toBe("alice/myrepo");
-    expect(res.body.caproverAppName).toBe("alice-myrepo");
-    expect(res.body.previewUrl).toBe("https://alice-myrepo.zycloud.space");
+    expect(res.body.caproverAppName).not.toBe("alice-myrepo"); // no longer owner/repo-derived
+    expect(res.body.previewUrl).toBe(`https://${res.body.caproverAppName}.zycloud.space`);
     expect(res.body.configured).toBe(true);
 
     const dbApp = await prisma.app.findUnique({
       where: { githubRepo: "alice/myrepo" },
-      include: { config: true },
+      include: { config: { include: { envVars: true } } },
     });
     expect(dbApp?.accountId).toBe(account.id);
-    expect(dbApp?.config).not.toBeNull();
+    expect(dbApp?.config?.buildPack).toBe("static");
+    expect(dbApp?.config?.targetBranch).toBe("main");
+    expect(dbApp?.config?.envVars).toEqual([]);
+  });
+
+  it("encrypts env var values before writing them", async () => {
+    const account = await seedAccount({ displayName: "alice" }, "alice-token");
+    await prisma.sourceConnection.create({
+      data: { provider: "GITHUB", externalId: "42", ownerLogin: "alice", accountId: account.id },
+    });
+
+    const res = await request(app)
+      .post("/apps")
+      .set("Cookie", "session=alice-token")
+      .send(
+        validAppBody({
+          envVars: [{ key: "API_KEY", value: "super-secret", secret: true }],
+        })
+      );
+
+    expect(res.status).toBe(201);
+    const dbApp = await prisma.app.findUnique({
+      where: { githubRepo: "alice/myrepo" },
+      include: { config: { include: { envVars: true } } },
+    });
+    const envVar = dbApp.config.envVars[0];
+    expect(envVar.key).toBe("API_KEY");
+    expect(envVar.secret).toBe(true);
+    expect(envVar.value).not.toBe("super-secret"); // stored encrypted, not plaintext
+    expect(envVar.value.split(":")).toHaveLength(3); // iv:authTag:ciphertext
   });
 
   it("normalises repo name to lowercase", async () => {
@@ -192,7 +244,7 @@ describe("POST /apps", () => {
     const res = await request(app)
       .post("/apps")
       .set("Cookie", "session=alice-token")
-      .send({ githubRepo: "Alice/MyRepo", installationId: 42 });
+      .send(validAppBody({ githubRepo: "Alice/MyRepo" }));
 
     expect(res.status).toBe(201);
     expect(res.body.githubRepo).toBe("alice/myrepo");
@@ -215,8 +267,28 @@ describe("POST /apps", () => {
     const res = await request(app)
       .post("/apps")
       .set("Cookie", "session=alice-token")
-      .send({ githubRepo: "alice/myrepo", installationId: 42 });
+      .send(validAppBody());
 
     expect(res.status).toBe(409);
+  });
+
+  it("retries with a fresh name when the generated caproverAppName collides", async () => {
+    const account = await seedAccount({ displayName: "alice" }, "alice-token");
+    await prisma.sourceConnection.create({
+      data: { provider: "GITHUB", externalId: "42", ownerLogin: "alice", accountId: account.id },
+    });
+    // Pre-seed an app occupying the name the mocked generator will return first.
+    await prisma.app.create({
+      data: { githubRepo: "someone/else", caproverAppName: "collision-name" },
+    });
+    generateAppName.mockReturnValueOnce("collision-name").mockReturnValueOnce("fresh-name");
+
+    const res = await request(app)
+      .post("/apps")
+      .set("Cookie", "session=alice-token")
+      .send(validAppBody());
+
+    expect(res.status).toBe(201);
+    expect(res.body.caproverAppName).toBe("fresh-name");
   });
 });

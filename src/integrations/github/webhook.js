@@ -53,17 +53,16 @@ async function handlePush(payload) {
     console.log("[webhook] Push has no installation context — ignoring");
     return;
   }
-  if (ref !== `refs/heads/${repository.default_branch}`) {
-    console.log(`[webhook] Skipping non-default branch: ${ref}`);
-    return;
-  }
 
   const owner = repository.owner.login.toLowerCase();
   const repo = repository.name.toLowerCase();
-  const appName = `${owner}-${repo}`.replace(/[^a-z0-9-]/g, "-");
   const installationId = installation.id;
-  console.log(`[webhook] Push to ${owner}/${repo} @ ${sha.slice(0, 7)} → app: ${appName}`);
 
+  // Look up app + config BEFORE the branch check — the target branch is now
+  // member-chosen (app.config.targetBranch), not GitHub's default_branch, so
+  // we need the DB row before we can even know which branch to compare against.
+  // envVars isn't included here — most pushes (feature branches, PRs) get
+  // discarded by the checks below, so it's only fetched once a deploy is certain.
   const app = await prisma.app.findUnique({
     where: { githubRepo: `${owner}/${repo}` },
     include: { config: true },
@@ -77,6 +76,17 @@ async function handlePush(payload) {
     console.log(`[webhook] Deploy skipped — ${owner}/${repo} not configured`);
     return;
   }
+  if (ref !== `refs/heads/${app.config.targetBranch}`) {
+    console.log(`[webhook] Skipping non-target branch: ${ref} (target: ${app.config.targetBranch})`);
+    return;
+  }
+
+  // Use the app name stored at connect time — it's randomly generated now, not
+  // re-derivable from owner/repo, so it must come from the DB row.
+  const appName = app.caproverAppName;
+  console.log(`[webhook] Push to ${owner}/${repo} @ ${sha.slice(0, 7)} → app: ${appName}`);
+
+  const envVars = await prisma.envVar.findMany({ where: { appConfigId: app.config.id } });
 
   const deploy = await prisma.deploy.create({
     data: { appId: app.id, commitSha: sha, status: "queued" },
@@ -91,6 +101,8 @@ async function handlePush(payload) {
     sha,
     installationId,
     appName,
+    buildPack: app.config.buildPack,
+    envVars,
     appId: app.id,
     deployId: deploy.id,
   })

@@ -129,3 +129,50 @@ describe("createApp", () => {
     expect(JSON.parse(opts.body).appName).toBe("alice-myrepo");
   });
 });
+
+describe("enableSsl", () => {
+  it("only enables the base-domain SSL cert, nothing else", async () => {
+    fetchMock
+      .mockResolvedValueOnce(mockLoginResponse())
+      .mockResolvedValueOnce({ ok: true, json: async () => ({}) });
+
+    await caprover.enableSsl("alice-myrepo");
+
+    expect(fetchMock).toHaveBeenCalledTimes(2); // login + this call only
+    const [url, opts] = fetchMock.mock.calls[1];
+    expect(url).toContain("/user/apps/appDefinitions/enablebasedomainssl");
+    expect(JSON.parse(opts.body).appName).toBe("alice-myrepo");
+  });
+});
+
+describe("updateAppDefinition", () => {
+  it("sends the containerHttpPort and envVars in the update body", async () => {
+    fetchMock
+      .mockResolvedValueOnce(mockLoginResponse())
+      .mockResolvedValueOnce({ ok: true, json: async () => ({}) });
+
+    await caprover.updateAppDefinition("alice-myrepo", {
+      containerHttpPort: 3000,
+      envVars: [{ key: "NODE_ENV", value: "production" }],
+    });
+
+    const [url, opts] = fetchMock.mock.calls[1];
+    expect(url).toContain("/user/apps/appDefinitions/update");
+    const body = JSON.parse(opts.body);
+    expect(body.appName).toBe("alice-myrepo");
+    expect(body.containerHttpPort).toBe(3000);
+    expect(body.envVars).toEqual([{ key: "NODE_ENV", value: "production" }]);
+    expect(body.forceSsl).toBe(true);
+  });
+
+  it("defaults envVars to an empty array", async () => {
+    fetchMock
+      .mockResolvedValueOnce(mockLoginResponse())
+      .mockResolvedValueOnce({ ok: true, json: async () => ({}) });
+
+    await caprover.updateAppDefinition("alice-myrepo", { containerHttpPort: 80 });
+
+    const [, opts] = fetchMock.mock.calls[1];
+    expect(JSON.parse(opts.body).envVars).toEqual([]);
+  });
+});

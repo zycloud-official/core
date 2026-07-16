@@ -15,11 +15,11 @@ afterEach(async () => {
 });
 
 describe("detectFramework", () => {
-  it("detects Dockerfile and returns null captainDef", async () => {
+  it("detects Dockerfile and emits a captain-definition pointing at it", async () => {
     await writeFile(join(dir, "Dockerfile"), "FROM node:20");
     const { framework, captainDef } = detectFramework(dir);
     expect(framework).toBe("dockerfile");
-    expect(captainDef).toBeNull();
+    expect(captainDef).toEqual({ schemaVersion: 1, dockerfilePath: "./Dockerfile" });
   });
 
   it("detects Vite via vite in dependencies", async () => {
@@ -66,7 +66,7 @@ describe("detectFramework", () => {
   it("detects Python via requirements.txt", async () => {
     await writeFile(join(dir, "requirements.txt"), "flask\ngunicorn\n");
     const { framework, captainDef } = detectFramework(dir);
-    expect(framework).toBe("python");
+    expect(framework).toBe("python-flask");
     expect(captainDef.dockerfileLines.some((l) => l.includes("app.py"))).toBe(true);
   });
 

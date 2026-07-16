@@ -2,12 +2,23 @@ import { readFileSync, readdirSync, existsSync } from "node:fs";
 import { join } from "node:path";
 
 /**
- * Detect the project framework from a directory and return
- * an appropriate captain-definition (or null if one should already exist).
+ * Detect the project framework from a directory and return the matching
+ * buildPacks key + captain-definition. This is the advisory/guess path —
+ * not wired into the connect flow yet (members pick a buildPack explicitly);
+ * kept for a future auto-suggestion feature, built on the same registry
+ * `deploy.js` uses for the explicit lookup.
  */
 export function detectFramework(dir) {
+  const key = detectBuildPackKey(dir);
+  if (key === "unknown") {
+    return { framework: "unknown", captainDef: null };
+  }
+  return { framework: key, captainDef: buildPacks[key].captainDef(dir) };
+}
+
+function detectBuildPackKey(dir) {
   if (existsSync(join(dir, "Dockerfile"))) {
-    return { framework: "dockerfile", captainDef: null }; // use as-is
+    return "dockerfile";
   }
 
   const pkgPath = join(dir, "package.json");
@@ -23,23 +34,27 @@ export function detectFramework(dir) {
       "@vitejs/plugin-react" in deps ||
       "@vitejs/plugin-vue" in deps
     ) {
-      return { framework: "vite", captainDef: viteDef(dir) };
+      return "vite";
     }
     if ("next" in deps) {
-      return { framework: "nextjs", captainDef: nextjsDef(dir) };
+      return "nextjs";
     }
-    return { framework: "node", captainDef: nodeDef(dir) };
+    return "node";
   }
 
   if (existsSync(join(dir, "requirements.txt"))) {
-    return { framework: "python", captainDef: pythonDef(dir) };
+    const deps = readRequirements(dir);
+    const has = (name) => deps.includes(name);
+    if (has("django") || existsSync(join(dir, "manage.py"))) return "python-django";
+    if (has("fastapi")) return "python-fastapi";
+    return "python-flask";
   }
 
   if (existsSync(join(dir, "index.html"))) {
-    return { framework: "static", captainDef: staticDef() };
+    return "static";
   }
 
-  return { framework: "unknown", captainDef: null };
+  return "unknown";
 }
 
 /**
@@ -90,6 +105,13 @@ function nodePackaging(dir, { dev }) {
     install: dev ? "RUN npm install" : "RUN npm install --omit=dev",
     run: "npm run",
   };
+}
+
+function dockerfileDef() {
+  // The repo already committed its own Dockerfile — CapRover just needs to be
+  // told to build from it (see deploy.js, which only writes a captain-definition
+  // when the repo doesn't already have one committed).
+  return { schemaVersion: 1, dockerfilePath: "./Dockerfile" };
 }
 
 function viteDef(dir) {
@@ -198,31 +220,25 @@ function pythonImage(port, cmdLine) {
   };
 }
 
-function pythonDef(dir) {
-  const deps = readRequirements(dir);
-  const has = (name) => deps.includes(name);
+// Django — served by gunicorn against the project's wsgi module on :8000.
+function djangoDef(dir) {
+  const module = findDjangoWsgiModule(dir) ?? "wsgi";
+  const target = module === "wsgi" ? "wsgi:application" : `${module}.wsgi:application`;
+  return pythonImage(8000, `CMD ["gunicorn", "${target}", "--bind", "0.0.0.0:8000"]`);
+}
 
-  // Django — served by gunicorn against the project's wsgi module on :8000.
-  if (has("django") || existsSync(join(dir, "manage.py"))) {
-    const module = findDjangoWsgiModule(dir) ?? "wsgi";
-    const target = module === "wsgi" ? "wsgi:application" : `${module}.wsgi:application`;
-    return pythonImage(
-      8000,
-      `CMD ["gunicorn", "${target}", "--bind", "0.0.0.0:8000"]`
-    );
-  }
+// FastAPI — an ASGI app served by uvicorn on :8000. Entry module is main.py
+// by convention, falling back to app.py; the app object is conventionally `app`.
+function fastapiDef(dir) {
+  const module = existsSync(join(dir, "main.py")) ? "main" : "app";
+  return pythonImage(
+    8000,
+    `CMD ["uvicorn", "${module}:app", "--host", "0.0.0.0", "--port", "8000"]`
+  );
+}
 
-  // FastAPI — an ASGI app served by uvicorn on :8000. Entry module is main.py
-  // by convention, falling back to app.py; the app object is conventionally `app`.
-  if (has("fastapi")) {
-    const module = existsSync(join(dir, "main.py")) ? "main" : "app";
-    return pythonImage(
-      8000,
-      `CMD ["uvicorn", "${module}:app", "--host", "0.0.0.0", "--port", "8000"]`
-    );
-  }
-
-  // Generic / Flask dev server — runs app.py directly on :5000.
+// Generic / Flask dev server — runs app.py directly on :5000.
+function flaskDef() {
   return pythonImage(5000, 'CMD ["python", "app.py"]');
 }
 
@@ -236,3 +252,18 @@ function staticDef() {
     ],
   };
 }
+
+// Single source of truth for build-pack behavior: the captain-definition
+// builder and the CapRover container port per preset. `deploy.js` looks this
+// up explicitly by the member's chosen buildPack; `detectFramework` above
+// consumes the same registry for its (currently unwired) guess path.
+export const buildPacks = {
+  dockerfile: { captainDef: dockerfileDef, containerHttpPort: 80 },
+  vite: { captainDef: viteDef, containerHttpPort: 80 },
+  nextjs: { captainDef: nextjsDef, containerHttpPort: 3000 },
+  node: { captainDef: nodeDef, containerHttpPort: 3000 },
+  "python-django": { captainDef: djangoDef, containerHttpPort: 8000 },
+  "python-fastapi": { captainDef: fastapiDef, containerHttpPort: 8000 },
+  "python-flask": { captainDef: flaskDef, containerHttpPort: 5000 },
+  static: { captainDef: staticDef, containerHttpPort: 80 },
+};

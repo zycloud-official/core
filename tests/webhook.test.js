@@ -67,8 +67,24 @@ describe("POST /webhook/github — push event", () => {
     },
   });
 
-  it("ignores pushes to non-default branches", async () => {
+  it("skips deploy when repo is not connected regardless of branch", async () => {
+    await cleanDb();
     vi.clearAllMocks();
+    const res = await webhookRequest("push", pushPayload("feature-xyz"));
+    expect(res.status).toBe(200);
+    expect(deployApp).not.toHaveBeenCalled();
+  });
+
+  it("skips deploy when push is to a non-target branch", async () => {
+    await cleanDb();
+    vi.clearAllMocks();
+    await prisma.app.create({
+      data: {
+        githubRepo: "alice/myrepo",
+        caproverAppName: "alice-myrepo",
+        config: { create: { buildPack: "static", targetBranch: "main" } },
+      },
+    });
     const res = await webhookRequest("push", pushPayload("feature-xyz"));
     expect(res.status).toBe(200);
     expect(deployApp).not.toHaveBeenCalled();
@@ -102,7 +118,7 @@ describe("POST /webhook/github — push event", () => {
       data: {
         githubRepo: "alice/myrepo",
         caproverAppName: "alice-myrepo",
-        config: { create: {} },
+        config: { create: { buildPack: "static", targetBranch: "main" } },
       },
     });
     const res = await webhookRequest("push", pushPayload("main"));
@@ -114,6 +130,8 @@ describe("POST /webhook/github — push event", () => {
         sha: "abc123def456",
         installationId: 42,
         appName: "alice-myrepo",
+        buildPack: "static",
+        envVars: [],
       })
     );
   });
@@ -125,7 +143,7 @@ describe("POST /webhook/github — push event", () => {
         githubRepo: "alice/myrepo",
         caproverAppName: "alice-myrepo",
         previewUrl: "https://alice-myrepo.zycloud.space",
-        config: { create: {} },
+        config: { create: { buildPack: "static", targetBranch: "main" } },
       },
     });
     await webhookRequest("push", pushPayload("main"));
@@ -135,13 +153,17 @@ describe("POST /webhook/github — push event", () => {
     expect(deploy?.commitSha).toBe("abc123def456");
   });
 
-  it("sanitises owner/repo names into a valid CapRover app name", async () => {
+  it("uses the stored caproverAppName, not a re-derived owner/repo string", async () => {
     await cleanDb();
+    vi.clearAllMocks();
+    // caproverAppName is randomly generated at connect time and has no
+    // relation to owner/repo — this locks in that the webhook reads it from
+    // the DB instead of recomputing something that would now be wrong.
     await prisma.app.create({
       data: {
         githubRepo: "my_org/my.repo",
-        caproverAppName: "my-org-my-repo",
-        config: { create: {} },
+        caproverAppName: "brave-otter-1234",
+        config: { create: { buildPack: "static", targetBranch: "main" } },
       },
     });
     const payload = {
@@ -153,6 +175,9 @@ describe("POST /webhook/github — push event", () => {
     await webhookRequest("push", payload);
     const deploy = await prisma.deploy.findFirst();
     expect(deploy).not.toBeNull();
+    expect(deployApp).toHaveBeenCalledWith(
+      expect.objectContaining({ appName: "brave-otter-1234" })
+    );
   });
 });
 

@@ -16,11 +16,13 @@ vi.mock("../src/caprover.js", () => ({
   createApp: vi.fn().mockResolvedValue(undefined),
   uploadTarball: vi.fn().mockResolvedValue({}),
   enableSsl: vi.fn().mockResolvedValue(undefined),
+  updateAppDefinition: vi.fn().mockResolvedValue(undefined),
 }));
 
 const { deployApp } = await import("../src/deploy.js");
 const { downloadTarball } = await import("../src/integrations/github/client.js");
-const { getAppDefinition, createApp, uploadTarball, enableSsl } = await import("../src/caprover.js");
+const { getAppDefinition, createApp, uploadTarball, enableSsl, updateAppDefinition } =
+  await import("../src/caprover.js");
 
 // Creates a minimal .tar.gz mimicking GitHub's tarball format
 // (files nested inside a top-level "owner-repo-sha/" directory).
@@ -57,6 +59,8 @@ async function seed() {
     sha: "abc123",
     installationId: 42,
     appName: "alice-testrepo",
+    buildPack: "static",
+    envVars: [],
     appId: testApp.id,
     deployId: testDeploy.id,
     deployDbId: testDeploy.id,
@@ -105,7 +109,7 @@ describe("deployApp — CapRover app lifecycle", () => {
 });
 
 describe("deployApp — captain-definition injection", () => {
-  it("injects a captain-definition when the repo has none", async () => {
+  it("injects a captain-definition for the chosen buildPack when the repo has none", async () => {
     await cleanDb();
     vi.clearAllMocks();
     const params = await seed();
@@ -114,11 +118,28 @@ describe("deployApp — captain-definition injection", () => {
     );
     getAppDefinition.mockResolvedValue({ appName: "alice-testrepo", hasDefaultSubDomainSsl: true });
 
-    await deployApp(params);
+    await deployApp({ ...params, buildPack: "vite" });
 
     expect(uploadTarball).toHaveBeenCalledOnce();
     const [, tarBuffer] = uploadTarball.mock.calls[0];
     expect(tarBuffer).toBeInstanceOf(Buffer);
+    // vite's containerHttpPort (80) should be what gets pushed to CapRover.
+    expect(updateAppDefinition).toHaveBeenCalledWith(
+      "alice-testrepo",
+      expect.objectContaining({ containerHttpPort: 80 })
+    );
+  });
+
+  it("throws for an unknown buildPack instead of silently deploying without one", async () => {
+    await cleanDb();
+    vi.clearAllMocks();
+    const params = await seed();
+    downloadTarball.mockResolvedValue(await makeTarball({ "index.html": "<html/>" }));
+    getAppDefinition.mockResolvedValue({ appName: "alice-testrepo", hasDefaultSubDomainSsl: true });
+
+    await expect(deployApp({ ...params, buildPack: "not-a-real-buildpack" })).rejects.toThrow(
+      "Unknown buildPack"
+    );
   });
 
   it("leaves an existing captain-definition untouched", async () => {
@@ -132,6 +153,27 @@ describe("deployApp — captain-definition injection", () => {
     await deployApp(params);
 
     expect(uploadTarball).toHaveBeenCalledOnce();
+  });
+});
+
+describe("deployApp — env vars", () => {
+  it("decrypts env vars just before pushing them to CapRover", async () => {
+    await cleanDb();
+    vi.clearAllMocks();
+    const params = await seed();
+    downloadTarball.mockResolvedValue(await makeTarball({ "index.html": "<html/>" }));
+    getAppDefinition.mockResolvedValue({ appName: "alice-testrepo", hasDefaultSubDomainSsl: true });
+
+    const { encryptSecret } = await import("../src/crypto/secrets.js");
+    await deployApp({
+      ...params,
+      envVars: [{ key: "NODE_ENV", value: encryptSecret("production") }],
+    });
+
+    expect(updateAppDefinition).toHaveBeenCalledWith(
+      "alice-testrepo",
+      expect.objectContaining({ envVars: [{ key: "NODE_ENV", value: "production" }] })
+    );
   });
 });
 

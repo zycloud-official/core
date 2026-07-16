@@ -5,6 +5,11 @@ import {
   listUserInstallationRepos,
 } from "../integrations/github/client.js";
 import { loadSession, requireSession } from "../middleware/session.js";
+import { buildPacks } from "../detect.js";
+import { generateAppName } from "../appName.js";
+import { encryptSecret } from "../crypto/secrets.js";
+
+const MAX_NAME_ATTEMPTS = 5;
 
 export const githubRoutes = Router();
 
@@ -77,10 +82,16 @@ githubRoutes.get("/github/repos", loadSession, requireSession, async (req, res) 
 });
 
 githubRoutes.post("/apps", loadSession, requireSession, async (req, res) => {
-  const { githubRepo, installationId } = req.body;
+  const { githubRepo, installationId, buildPack, targetBranch, envVars } = req.body;
 
-  if (!githubRepo || !installationId) {
-    return res.status(400).json({ error: "githubRepo and installationId are required" });
+  if (!githubRepo || !installationId || !buildPack || !targetBranch) {
+    return res.status(400).json({
+      error: "githubRepo, installationId, buildPack, and targetBranch are required",
+    });
+  }
+
+  if (!Object.keys(buildPacks).includes(buildPack)) {
+    return res.status(400).json({ error: `Unknown buildPack: ${buildPack}` });
   }
 
   const parts = githubRepo.toLowerCase().split("/");
@@ -105,19 +116,43 @@ githubRoutes.post("/apps", loadSession, requireSession, async (req, res) => {
     return res.status(409).json({ error: "Repo already connected" });
   }
 
-  const appName = `${owner}-${repo}`.replace(/[^a-z0-9-]/g, "-");
-
-  const app = await prisma.app.create({
-    data: {
-      githubRepo: `${owner}/${repo}`,
-      caproverAppName: appName,
-      previewUrl: `https://${appName}.zycloud.space`,
-      accountId: req.account.id,
-      sourceConnectionId: connection.id,
-      config: { create: {} },
-    },
-    include: { config: true },
-  });
+  // caproverAppName is randomly generated (free tier — no member input yet; a
+  // future paid tier may let members choose their own). Retry on the rare
+  // collision rather than trusting a pre-check to close the race.
+  let app;
+  for (let attempt = 0; attempt < MAX_NAME_ATTEMPTS; attempt++) {
+    const caproverAppName = generateAppName();
+    try {
+      app = await prisma.app.create({
+        data: {
+          githubRepo: `${owner}/${repo}`,
+          caproverAppName,
+          previewUrl: `https://${caproverAppName}.zycloud.space`,
+          accountId: req.account.id,
+          sourceConnectionId: connection.id,
+          config: {
+            create: {
+              buildPack,
+              targetBranch,
+              envVars: {
+                create: (envVars ?? []).map((v) => ({
+                  key: v.key,
+                  value: encryptSecret(v.value),
+                  secret: !!v.secret,
+                })),
+              },
+            },
+          },
+        },
+        include: { config: true },
+      });
+      break;
+    } catch (err) {
+      const isNameCollision = err.code === "P2002" && err.meta?.target?.includes("caprover_app_name");
+      if (isNameCollision && attempt < MAX_NAME_ATTEMPTS - 1) continue;
+      throw err;
+    }
+  }
 
   res.status(201).json({
     githubRepo: app.githubRepo,

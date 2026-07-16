@@ -15,8 +15,15 @@ import * as tar from "tar";
 // app's SourceConnection.provider to the right downloadTarball implementation
 // instead of importing GitHub's directly. The rest of the pipeline is agnostic.
 import { downloadTarball } from "./integrations/github/client.js";
-import { detectFramework } from "./detect.js";
-import { getAppDefinition, createApp, uploadTarball, enableSsl } from "./caprover.js";
+import { buildPacks } from "./detect.js";
+import {
+  getAppDefinition,
+  createApp,
+  uploadTarball,
+  enableSsl,
+  updateAppDefinition,
+} from "./caprover.js";
+import { decryptSecret } from "./crypto/secrets.js";
 import { prisma } from "./db.js";
 
 const log = (deployId, msg) =>
@@ -31,6 +38,8 @@ export async function deployApp({
   sha,
   installationId,
   appName,
+  buildPack,
+  envVars = [],
   appId,
   deployId,
 }) {
@@ -74,17 +83,17 @@ export async function deployApp({
       hasCaptainDef = true;
     } catch {}
 
+    const pack = buildPacks[buildPack];
+    if (!pack) {
+      throw new Error(`Unknown buildPack: ${buildPack}`);
+    }
+
     if (hasCaptainDef) {
       log(deployId, "Found existing captain-definition — using as-is");
     } else {
-      const { framework, captainDef } = detectFramework(extractDir);
-      log(deployId, `No captain-definition found — detected framework: ${framework}`);
-      if (captainDef) {
-        await writeFile(captainDefPath, JSON.stringify(captainDef, null, 2));
-        log(deployId, `Injected captain-definition for ${framework}`);
-      } else {
-        log(deployId, "No captain-definition generated (unknown framework) — proceeding without one");
-      }
+      const captainDef = pack.captainDef(extractDir);
+      await writeFile(captainDefPath, JSON.stringify(captainDef, null, 2));
+      log(deployId, `Injected captain-definition for buildPack: ${buildPack}`);
     }
 
     // 4. Repack into a clean tarball
@@ -117,6 +126,15 @@ export async function deployApp({
       await enableSsl(appName);
       log(deployId, "HTTPS enabled");
     }
+
+    // 8. Push the buildpack's port + env vars on every deploy (not just the
+    // first) — env vars can be added later, and the port depends on buildPack.
+    log(deployId, `Updating app definition (port ${pack.containerHttpPort}, ${envVars.length} env var(s))...`);
+    await updateAppDefinition(appName, {
+      containerHttpPort: pack.containerHttpPort,
+      envVars: envVars.map((v) => ({ key: v.key, value: decryptSecret(v.value) })),
+    });
+    log(deployId, "App definition updated");
 
     const elapsed = ((Date.now() - t0) / 1000).toFixed(1);
     const previewUrl = `https://${appName}.zycloud.space`;

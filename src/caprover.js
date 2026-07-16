@@ -55,15 +55,26 @@ export async function createApp(appName) {
 export async function enableSsl(appName) {
   console.log(`[caprover] Enabling SSL for: ${appName}`);
   await api("POST", "/user/apps/appDefinitions/enablebasedomainssl", { appName });
+  console.log(`[caprover] SSL enabled for: ${appName}`);
+}
+
+// Pushes the buildpack's containerHttpPort and the app's env vars to CapRover.
+// Runs on every deploy (not just the first), since env vars can be empty/added
+// over time and the port depends on the member's chosen buildPack.
+export async function updateAppDefinition(appName, { containerHttpPort, envVars = [] }) {
+  console.log(
+    `[caprover] Updating app definition for: ${appName} (port ${containerHttpPort}, ${envVars.length} env var(s))`
+  );
   await api("POST", "/user/apps/appDefinitions/update", {
     appName,
     forceSsl: true,
     websocketSupport: false,
-    containerHttpPort: 80,
+    containerHttpPort,
     notExposeAsWebApp: false,
     description: "",
+    envVars,
   });
-  console.log(`[caprover] SSL enabled for: ${appName}`);
+  console.log(`[caprover] App definition updated for: ${appName}`);
 }
 
 export async function uploadTarball(appName, tarballBuffer) {

@@ -39,14 +39,15 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 /**
  * Reproduce what CapRover does with a captain-definition: write its
  * dockerfileLines to a Dockerfile in the build context. For the `dockerfile`
- * framework, captainDef is null and the repo's own Dockerfile is used as-is.
+ * framework, captainDef points at the repo's own committed Dockerfile (no
+ * dockerfileLines to write) — use it as-is.
  */
 function prepareBuildContext(name) {
   const buildDir = mkdtempSync(join(tmpdir(), `zycloud-build-${name}-`));
   cpSync(join(FIXTURES, name), buildDir, { recursive: true });
 
   const { framework, captainDef } = detectFramework(buildDir);
-  if (captainDef) {
+  if (captainDef?.dockerfileLines) {
     writeFileSync(
       join(buildDir, "Dockerfile"),
       captainDef.dockerfileLines.join("\n") + "\n"

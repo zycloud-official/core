@@ -10,9 +10,9 @@ const EXPECTED = {
   vite: "vite",
   nextjs: "nextjs",
   node: "node",
-  python: "python",
-  "python-fastapi": "python",
-  "python-django": "python",
+  python: "python-flask",
+  "python-fastapi": "python-fastapi",
+  "python-django": "python-django",
   static: "static",
   dockerfile: "dockerfile",
 };

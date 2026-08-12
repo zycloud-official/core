@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import request from "supertest";
 import { prisma } from "../src/db.js";
+import { encryptSecret } from "../src/crypto/secrets.js";
 import { cleanDb } from "./helpers.js";
 
 // Mock the GitHub client — tests control what the user-token discovery returns.
@@ -290,5 +291,217 @@ describe("POST /apps", () => {
 
     expect(res.status).toBe(201);
     expect(res.body.caproverAppName).toBe("fresh-name");
+  });
+});
+
+let appCounter = 0;
+async function createApp(accountId, configOverrides = {}) {
+  const name = `test-app-${++appCounter}`;
+  return prisma.app.create({
+    data: {
+      githubRepo: `alice/${name}`,
+      caproverAppName: name,
+      accountId,
+      config: {
+        create: {
+          buildPack: "static",
+          targetBranch: "main",
+          ...configOverrides,
+        },
+      },
+    },
+    include: { config: { include: { envVars: true } } },
+  });
+}
+
+describe("GET /apps/:id", () => {
+  beforeEach(cleanDb);
+
+  it("returns 401 with no session", async () => {
+    const res = await request(app).get("/apps/1");
+    expect(res.status).toBe(401);
+  });
+
+  it("returns 404 for an app belonging to another account", async () => {
+    await seedAccount({ displayName: "alice" }, "alice-token");
+    const other = await seedAccount({ displayName: "bob" }, "bob-token");
+    const dbApp = await createApp(other.id);
+
+    const res = await request(app)
+      .get(`/apps/${dbApp.id}`)
+      .set("Cookie", "session=alice-token");
+    expect(res.status).toBe(404);
+  });
+
+  it("returns 404 for a non-numeric id", async () => {
+    await seedAccount({ displayName: "alice" }, "alice-token");
+    const res = await request(app)
+      .get("/apps/not-a-number")
+      .set("Cookie", "session=alice-token");
+    expect(res.status).toBe(400);
+  });
+
+  it("returns config with decrypted non-secret values and redacted secrets", async () => {
+    const account = await seedAccount({ displayName: "alice" }, "alice-token");
+    const dbApp = await createApp(account.id, {
+      envVars: {
+        create: [
+          { key: "NODE_ENV", value: encryptSecret("production"), secret: false },
+          { key: "API_KEY", value: encryptSecret("super-secret"), secret: true },
+        ],
+      },
+    });
+
+    const res = await request(app)
+      .get(`/apps/${dbApp.id}`)
+      .set("Cookie", "session=alice-token");
+
+    expect(res.status).toBe(200);
+    expect(res.body.id).toBe(dbApp.id);
+    expect(res.body.buildPack).toBe("static");
+    expect(res.body.targetBranch).toBe("main");
+
+    const nodeEnv = res.body.envVars.find((v) => v.key === "NODE_ENV");
+    const apiKey = res.body.envVars.find((v) => v.key === "API_KEY");
+    expect(nodeEnv.value).toBe("production");
+    expect(apiKey.secret).toBe(true);
+    expect(apiKey.value).toBeNull();
+  });
+});
+
+describe("PATCH /apps/:id", () => {
+  beforeEach(cleanDb);
+
+  it("returns 401 with no session", async () => {
+    const res = await request(app).patch("/apps/1").send({ buildPack: "static", targetBranch: "main" });
+    expect(res.status).toBe(401);
+  });
+
+  it("returns 404 for an app belonging to another account", async () => {
+    await seedAccount({ displayName: "alice" }, "alice-token");
+    const other = await seedAccount({ displayName: "bob" }, "bob-token");
+    const dbApp = await createApp(other.id);
+
+    const res = await request(app)
+      .patch(`/apps/${dbApp.id}`)
+      .set("Cookie", "session=alice-token")
+      .send({ buildPack: "node", targetBranch: "develop" });
+    expect(res.status).toBe(404);
+  });
+
+  it("returns 400 for an unknown buildPack", async () => {
+    const account = await seedAccount({ displayName: "alice" }, "alice-token");
+    const dbApp = await createApp(account.id);
+
+    const res = await request(app)
+      .patch(`/apps/${dbApp.id}`)
+      .set("Cookie", "session=alice-token")
+      .send({ buildPack: "cobol", targetBranch: "main" });
+    expect(res.status).toBe(400);
+  });
+
+  it("updates buildPack and targetBranch", async () => {
+    const account = await seedAccount({ displayName: "alice" }, "alice-token");
+    const dbApp = await createApp(account.id);
+
+    const res = await request(app)
+      .patch(`/apps/${dbApp.id}`)
+      .set("Cookie", "session=alice-token")
+      .send({ buildPack: "node", targetBranch: "develop" });
+
+    expect(res.status).toBe(200);
+    expect(res.body.buildPack).toBe("node");
+    expect(res.body.targetBranch).toBe("develop");
+
+    const dbConfig = await prisma.appConfig.findUnique({ where: { appId: dbApp.id } });
+    expect(dbConfig.buildPack).toBe("node");
+    expect(dbConfig.targetBranch).toBe("develop");
+  });
+
+  it("creates, updates, and deletes env vars in one request", async () => {
+    const account = await seedAccount({ displayName: "alice" }, "alice-token");
+    const dbApp = await createApp(account.id, {
+      envVars: {
+        create: [
+          { key: "KEEP_ME", value: encryptSecret("old-value"), secret: false },
+          { key: "DELETE_ME", value: encryptSecret("bye"), secret: false },
+        ],
+      },
+    });
+    const [keepMe] = dbApp.config.envVars.filter((v) => v.key === "KEEP_ME");
+
+    const res = await request(app)
+      .patch(`/apps/${dbApp.id}`)
+      .set("Cookie", "session=alice-token")
+      .send({
+        buildPack: "static",
+        targetBranch: "main",
+        envVars: [
+          { id: keepMe.id, key: "KEEP_ME", value: "new-value", secret: false },
+          { key: "NEW_VAR", value: "hello", secret: false },
+        ],
+      });
+
+    expect(res.status).toBe(200);
+    const keys = res.body.envVars.map((v) => v.key).sort();
+    expect(keys).toEqual(["KEEP_ME", "NEW_VAR"]);
+    expect(res.body.envVars.find((v) => v.key === "KEEP_ME").value).toBe("new-value");
+  });
+
+  it("leaves a secret's stored value untouched when value is null", async () => {
+    const account = await seedAccount({ displayName: "alice" }, "alice-token");
+    const dbApp = await createApp(account.id, {
+      envVars: { create: [{ key: "API_KEY", value: encryptSecret("original"), secret: true }] },
+    });
+    const [apiKey] = dbApp.config.envVars;
+
+    const res = await request(app)
+      .patch(`/apps/${dbApp.id}`)
+      .set("Cookie", "session=alice-token")
+      .send({
+        buildPack: "static",
+        targetBranch: "main",
+        envVars: [{ id: apiKey.id, key: "API_KEY", value: null, secret: true }],
+      });
+
+    expect(res.status).toBe(200);
+    const dbEnvVar = await prisma.envVar.findUnique({ where: { id: apiKey.id } });
+    expect(dbEnvVar.value).toBe(apiKey.value); // unchanged ciphertext
+  });
+
+  it("omitting envVars entirely leaves existing rows untouched", async () => {
+    const account = await seedAccount({ displayName: "alice" }, "alice-token");
+    const dbApp = await createApp(account.id, {
+      envVars: { create: [{ key: "UNTOUCHED", value: encryptSecret("v"), secret: false }] },
+    });
+
+    const res = await request(app)
+      .patch(`/apps/${dbApp.id}`)
+      .set("Cookie", "session=alice-token")
+      .send({ buildPack: "static", targetBranch: "main" });
+
+    expect(res.status).toBe(200);
+    const dbEnvVars = await prisma.envVar.findMany({ where: { appConfigId: dbApp.config.id } });
+    expect(dbEnvVars).toHaveLength(1);
+  });
+
+  it("returns 400 for an envVar id that doesn't belong to this app", async () => {
+    const account = await seedAccount({ displayName: "alice" }, "alice-token");
+    const dbApp = await createApp(account.id);
+    const otherApp = await createApp(account.id);
+    const foreignEnvVar = await prisma.envVar.create({
+      data: { appConfigId: otherApp.config.id, key: "FOREIGN", value: encryptSecret("x"), secret: false },
+    });
+
+    const res = await request(app)
+      .patch(`/apps/${dbApp.id}`)
+      .set("Cookie", "session=alice-token")
+      .send({
+        buildPack: "static",
+        targetBranch: "main",
+        envVars: [{ id: foreignEnvVar.id, key: "FOREIGN", value: "x", secret: false }],
+      });
+
+    expect(res.status).toBe(400);
   });
 });

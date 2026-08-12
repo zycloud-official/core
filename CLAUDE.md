@@ -256,11 +256,20 @@ branch. `AppConfig` now carries real, member-chosen deploy config:
   `buildPacks` registry described in [Framework templates](#framework-templates).
   `deploy.js` consumes it via explicit lookup; `detectFramework` still exists as
   an unwired guess path.
-- `ConnectRepoModal.tsx` / dashboard (`app/`) — **not done yet.** The UI still
-  fires `connectRepo` immediately with just `{githubRepo, installationId}`; it
-  needs updating to collect `buildPack`/`targetBranch`/`envVars` in a form before
-  submitting (still one `POST /apps` call) and will start getting 400s from the
-  new required fields until it's updated. Deliberate follow-up, not scoped here.
+- `ConnectRepoModal.tsx` / dashboard (`app/`) — **done.** The UI collects
+  `buildPack`/`targetBranch`/`envVars` in a form (`ConfigureRepoForm`) before
+  submitting the single `POST /apps` call.
+- **Editing an existing app's config** — also done: `GET /apps/:id` (redacts
+  `secret: true` env var values) and `PATCH /apps/:id` in `github.js`, plus a
+  matching `EditAppConfigModal.tsx` wired to an "Edit" button on each dashboard
+  row (`app/`). Config-only — no redeploy is triggered; changes take effect on
+  the app's next push, since `webhook.js` already reads `buildPack`/
+  `targetBranch`/`envVars` fresh from the DB on every deploy. `PATCH`'s env var
+  handling is a full-replace keyed by id: entries with an id update that row
+  (`value: null` keeps the existing encrypted blob — how a secret survives an
+  edit the member didn't touch), entries without an id are created, and any
+  existing row missing from the payload is deleted. Ownership check returns 404
+  (not 403) on a foreign app id, matching the `dashboard.js` convention.
 
 ### Env var secret encryption
 
@@ -287,7 +296,9 @@ schema/API redesign:
    request.
 6. **API rule**: any `GET` of `AppConfig`/`EnvVar` redacts `secret: true` rows
    (`value: null`) — write-only, same UX as GitHub Actions secrets. Non-secret rows
-   (e.g. `NODE_ENV=production`) return normally.
+   (e.g. `NODE_ENV=production`) return normally. Enforced in `GET /apps/:id`
+   (`serializeAppConfig` in `github.js`) — the only endpoint that returns `EnvVar`
+   rows.
 7. **Threat model, stated explicitly**: defends against DB dumps/backups or a
    SQL-injection-style read landing on plaintext credentials. Does **not** defend
    against the `core` process itself being compromised (whoever can read
@@ -302,13 +313,11 @@ schema/API redesign:
 
 ### Known issues / open risks
 
-- **This only covers creation, not editing.** Env vars especially will need
-  rotation/updates later, but `buildPack`/`targetBranch`/env vars have no `PATCH`
-  endpoint or edit UI yet — connect-time only.
-- **Frontend not updated yet** — `ConnectRepoModal.tsx` still sends the old
-  two-field request; it needs the new form (buildpack picker, branch field, env
-  var editor) before members can actually use any of this. See "Pipeline changes
-  made" above.
+- **Editing triggers no redeploy.** `PATCH /apps/:id` persists config only; a
+  buildpack fix or secret rotation doesn't take effect until the member's next
+  push. Redeploying on edit would need a live GitHub API call to fetch the
+  target branch's current HEAD sha (no existing code path does this outside a
+  webhook payload) — deferred, a deliberate v1 tradeoff, not an oversight.
 - **Buildpack auto-suggestion needs plumbing that doesn't exist** — deferred for
   v1 (see [Framework templates](#framework-templates) above): today's `GET
   /github/repos` only returns GitHub metadata, never repo contents.
@@ -394,11 +403,8 @@ This project will evolve into **core** — the central backend for the entire zy
 - [x] Two-tier test setup: detection snapshots + opt-in Docker build tier
 - [x] Nightly CI running the Docker build tier
 - [x] **App Configuration backend** (see [App Configuration](#app-configuration) above) — `AppConfig.buildPack`/`targetBranch`, `EnvVar` model encrypted at rest, random app-name generation (`App.caproverAppName` reused, now unique), `webhook.js` reordered to use `app.config.targetBranch` + the stored app name, `containerHttpPort` derived per buildpack, bare-Dockerfile gap fixed
-
-**Next up — App Configuration frontend**
-
-- [ ] `ConnectRepoModal.tsx` (`app/`): form for buildpack picker / branch field / env var editor before submitting `POST /apps` — backend contract is ready and waiting
-- [ ] `libs/api.ts` (`app/`): update `connectRepo`'s request shape to match
+- [x] **App Configuration frontend** — `ConnectRepoModal.tsx`'s `ConfigureRepoForm` (buildpack picker, branch field, env var editor) wired to `POST /apps`
+- [x] **App Configuration editing** — `GET`/`PATCH /apps/:id` + `EditAppConfigModal.tsx`, config-only (no redeploy on edit — see Known issues above)
 
 **Near-term (templates & quality)**
 
@@ -407,7 +413,8 @@ This project will evolve into **core** — the central backend for the entire zy
 - [ ] More templates: Go, Rust, SvelteKit/Astro/Nuxt, static-site generators
 - [ ] Build logs streamed to dashboard
 
-**Core platform** (see root `ZYCLOUD-PLAN.md` for the accounts + federation initiative)
+**Core platform** (see the Notion Engineering KB → Plans → "Zycloud — Accounts + Federation Plan"
+for the accounts + federation initiative: https://app.notion.com/p/3ab385f9a5f68147becbc4ad81ccbf20)
 
 - [x] Shared zycloud account system — provider-agnostic `Account` + `AuthIdentity` + `Session` (replaces the GitHub-only Member model)
 - [x] GitHub linked to the account as a `SourceConnection` (identity vs. deployment source decoupled; provider-agnostic, ready for GitLab/others)

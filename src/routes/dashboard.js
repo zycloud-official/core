@@ -29,6 +29,7 @@ dashboardRoutes.get("/dashboard", loadSession, requireSession, async (req, res) 
       tier: account.tier,
     },
     apps: apps.map((app) => ({
+      id: app.id,
       githubRepo: app.githubRepo,
       caproverAppName: app.caproverAppName,
       previewUrl: app.previewUrl,

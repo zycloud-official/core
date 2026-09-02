@@ -5,15 +5,15 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 // (BASE, PASSWORD) are read with the correct env values from vitest.config.js.
 
 function mockLoginResponse(token = "captain-token") {
-  return { ok: true, json: async () => ({ data: { token } }) };
+  return { ok: true, text: async () => JSON.stringify({ data: { token } }) };
 }
 
 function mockApiResponse(data) {
-  return { ok: true, json: async () => ({ data }) };
+  return { ok: true, text: async () => JSON.stringify({ data }) };
 }
 
-function mockErrorResponse(status = 500) {
-  return { ok: false, status, json: async () => ({}) };
+function mockErrorResponse(status = 500, body = {}) {
+  return { ok: false, status, text: async () => JSON.stringify(body) };
 }
 
 let caprover;
@@ -120,7 +120,7 @@ describe("createApp", () => {
   it("POSTs to appDefinitions with the correct app name", async () => {
     fetchMock
       .mockResolvedValueOnce(mockLoginResponse())
-      .mockResolvedValueOnce({ ok: true, json: async () => ({}) });
+      .mockResolvedValueOnce({ ok: true, text: async () => "{}" });
 
     await caprover.createApp("alice-myrepo");
 
@@ -134,7 +134,7 @@ describe("enableSsl", () => {
   it("only enables the base-domain SSL cert, nothing else", async () => {
     fetchMock
       .mockResolvedValueOnce(mockLoginResponse())
-      .mockResolvedValueOnce({ ok: true, json: async () => ({}) });
+      .mockResolvedValueOnce({ ok: true, text: async () => "{}" });
 
     await caprover.enableSsl("alice-myrepo");
 
@@ -149,7 +149,7 @@ describe("updateAppDefinition", () => {
   it("sends the containerHttpPort and envVars in the update body", async () => {
     fetchMock
       .mockResolvedValueOnce(mockLoginResponse())
-      .mockResolvedValueOnce({ ok: true, json: async () => ({}) });
+      .mockResolvedValueOnce({ ok: true, text: async () => "{}" });
 
     await caprover.updateAppDefinition("alice-myrepo", {
       containerHttpPort: 3000,
@@ -168,11 +168,58 @@ describe("updateAppDefinition", () => {
   it("defaults envVars to an empty array", async () => {
     fetchMock
       .mockResolvedValueOnce(mockLoginResponse())
-      .mockResolvedValueOnce({ ok: true, json: async () => ({}) });
+      .mockResolvedValueOnce({ ok: true, text: async () => "{}" });
 
     await caprover.updateAppDefinition("alice-myrepo", { containerHttpPort: 80 });
 
     const [, opts] = fetchMock.mock.calls[1];
     expect(JSON.parse(opts.body).envVars).toEqual([]);
+  });
+});
+
+describe("transient CapRover errors", () => {
+  it("retries a 429 with backoff and succeeds", async () => {
+    vi.useFakeTimers();
+    fetchMock
+      .mockResolvedValueOnce(mockLoginResponse())
+      .mockResolvedValueOnce(mockErrorResponse(429, { description: "busy" }))
+      .mockResolvedValueOnce(mockApiResponse({ appDefinitions: [] }));
+
+    const promise = caprover.getAppDefinition("myapp");
+    await vi.advanceTimersByTimeAsync(3000);
+    expect(await promise).toBeNull();
+
+    vi.useRealTimers();
+  });
+
+  it("throws with the response body after exhausting retries", async () => {
+    vi.useFakeTimers();
+    fetchMock
+      .mockResolvedValueOnce(mockLoginResponse())
+      .mockResolvedValue(mockErrorResponse(429, { description: "still busy" }));
+
+    const promise = caprover.getAppDefinition("myapp");
+    const assertion = expect(promise).rejects.toThrow(/still busy/);
+    await vi.advanceTimersByTimeAsync(3000 + 6000);
+    await assertion;
+
+    vi.useRealTimers();
+  });
+
+  it("does not retry a non-retryable status", async () => {
+    fetchMock
+      .mockResolvedValueOnce(mockLoginResponse())
+      .mockResolvedValueOnce(mockErrorResponse(401, { description: "bad token" }));
+
+    await expect(caprover.getAppDefinition("myapp")).rejects.toThrow(/bad token/);
+    expect(fetchMock).toHaveBeenCalledTimes(2); // login + the single failed call
+  });
+
+  it("throws a descriptive error when the response shape is unexpected", async () => {
+    fetchMock
+      .mockResolvedValueOnce(mockLoginResponse())
+      .mockResolvedValueOnce(mockApiResponse(undefined));
+
+    await expect(caprover.getAppDefinition("myapp")).rejects.toThrow(/unexpected appDefinitions/);
   });
 });

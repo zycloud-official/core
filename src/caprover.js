@@ -13,15 +13,22 @@ async function getToken() {
     headers: { "Content-Type": "application/json", "x-namespace": "captain" },
     body: JSON.stringify({ password: PASSWORD }),
   });
-  if (!res.ok) throw new Error(`CapRover login failed: ${res.status}`);
-  const { data } = await res.json();
+  const text = await res.text();
+  if (!res.ok) throw new Error(`CapRover login failed: ${res.status}: ${text.slice(0, 300)}`);
+  const { data } = JSON.parse(text);
   cachedToken = data.token;
   tokenExpiry = Date.now() + 50 * 60 * 1000;
   console.log("[caprover] Authenticated (token cached for 50 min)");
   return cachedToken;
 }
 
-async function api(method, path, body) {
+// CapRover's captain service occasionally returns transient errors (429 while
+// another operation holds its internal lock, 502/503/504 if it's briefly
+// overloaded) — retry those a couple of times with backoff instead of failing
+// the whole deploy on one flaky response.
+const RETRYABLE_STATUSES = new Set([429, 502, 503, 504]);
+
+async function api(method, path, body, attempt = 1) {
   const token = await getToken();
   const res = await fetch(`${BASE}/api/v2${path}`, {
     method,
@@ -32,16 +39,37 @@ async function api(method, path, body) {
     },
     body: body ? JSON.stringify(body) : undefined,
   });
-  if (!res.ok) throw new Error(`CapRover ${method} ${path} → ${res.status}`);
-  return res.json();
+  const text = await res.text();
+
+  if (!res.ok) {
+    if (RETRYABLE_STATUSES.has(res.status) && attempt < 3) {
+      const delayMs = attempt * 3000;
+      console.warn(
+        `[caprover] ${method} ${path} → ${res.status}, retrying in ${delayMs}ms (attempt ${attempt}/2): ${text.slice(0, 300)}`
+      );
+      await new Promise((resolve) => setTimeout(resolve, delayMs));
+      return api(method, path, body, attempt + 1);
+    }
+    throw new Error(`CapRover ${method} ${path} → ${res.status}: ${text.slice(0, 300)}`);
+  }
+
+  try {
+    return JSON.parse(text);
+  } catch {
+    throw new Error(`CapRover ${method} ${path} returned non-JSON response: ${text.slice(0, 300)}`);
+  }
 }
 
 // Returns the full CapRover app definition, or null if the app doesn't exist.
 // Callers can inspect .hasDefaultSubDomainSsl to check SSL status.
 export async function getAppDefinition(appName) {
   console.log(`[caprover] Fetching app definition: ${appName}`);
-  const { data } = await api("GET", "/user/apps/appDefinitions");
-  const app = data.appDefinitions.find((a) => a.appName === appName) ?? null;
+  const result = await api("GET", "/user/apps/appDefinitions");
+  const appDefinitions = result?.data?.appDefinitions;
+  if (!Array.isArray(appDefinitions)) {
+    throw new Error(`CapRover returned an unexpected appDefinitions response: ${JSON.stringify(result).slice(0, 300)}`);
+  }
+  const app = appDefinitions.find((a) => a.appName === appName) ?? null;
   console.log(`[caprover] App ${appName}: ${app ? `exists (ssl=${app.hasDefaultSubDomainSsl})` : "not found"}`);
   return app;
 }
